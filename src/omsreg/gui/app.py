@@ -235,7 +235,7 @@ class App(tk.Tk):
         row += 1
 
         bar = tk.Frame(page, bg=C_CARD)
-        bar.grid(row=row, column=0, columnspan=3, sticky="sw", pady=(16, 0))
+        bar.grid(row=row, column=0, columnspan=3, sticky="swe", pady=(16, 0))
         for j, a in enumerate(spec.actions):
             btn = ttk.Button(bar, text=a.label, style=a.style,
                              command=lambda s=spec, ac=a: self._run(s, ac))
@@ -244,9 +244,9 @@ class App(tk.Tk):
         tab.open_btn = ttk.Button(bar, text="Открыть результат", style="Ghost.TButton",
                                   state="disabled", command=self._open_last)
         tab.open_btn.pack(side="left", padx=(14, 0))
-        # глобальная кнопка сохранения настроек — в том же ряду, что и действия утилиты
+        # глобальная кнопка сохранения настроек — прижата к правому краю ряда
         ttk.Button(bar, text="Сохранить настройки", style="Ghost.TButton",
-                   command=self._save_config).pack(side="left", padx=(24, 0))
+                   command=self._save_config).pack(side="right")
 
     def _build_field(self, page: tk.Frame, row: int, tab: UtilityTab, p) -> int:
         var = tab.make_var(p)
