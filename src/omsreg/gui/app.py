@@ -63,8 +63,8 @@ class App(tk.Tk):
     def __init__(self, specs: list[UtilitySpec] | None = None):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("980x740")
-        self.minsize(820, 620)
+        self.geometry("1120x780")
+        self.minsize(1000, 650)
         self.configure(bg=C_BG)
 
         self.specs = specs if specs is not None else discover()
@@ -77,10 +77,10 @@ class App(tk.Tk):
 
         build_styles(self)
         self._build_header()
-        self._build_tabs()
+        self._build_body()
         self.log = LogPanel(self)
 
-        self.log.write("Готово к работе. Выберите вкладку, укажите папку и нажмите кнопку.")
+        self.log.write("Готово к работе. Выберите утилиту слева, укажите папку и нажмите кнопку.")
         self._load_config()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -95,35 +95,90 @@ class App(tk.Tk):
             anchor="w", padx=20, pady=(0, 12))
         tk.Frame(self, bg=C_ACCENT, height=3).pack(fill="x", side="top")
 
-    def _build_tabs(self) -> None:
+    def _build_body(self) -> None:
+        """Слева — вертикальный список утилит (с прокруткой, если не влезает по высоте),
+        справа — панель полей выбранной утилиты. Масштабируется на любое число утилит:
+        горизонтальная полоса вкладок ломалась уже на 4-5 длинных названиях."""
+        sidebar_w = 232
         self.active_tab = 0
         self.tab_buttons: list[tk.Label] = []
         self.tab_pages: list[tk.Frame] = []
-        self.tabbar = tk.Frame(self, bg=C_BG)
-        self.tabbar.pack(fill="x", side="top", padx=12, pady=(12, 0))
-        holder = tk.Frame(self, bg=C_CARD, highlightthickness=1, highlightbackground=C_BORDER)
-        holder.pack(fill="x", side="top", padx=12, pady=(0, 6))
+
+        mid = tk.Frame(self, bg=C_BG)
+        mid.pack(side="top", fill="x", padx=12, pady=(12, 6))
+
+        # --- боковой список утилит в прокручиваемом холсте ---
+        side = tk.Frame(mid, bg=C_BG)
+        side.pack(side="left", fill="y")
+        canvas = tk.Canvas(side, bg=C_BG, width=sidebar_w, highlightthickness=0, bd=0)
+        vsb = ttk.Scrollbar(side, orient="vertical", command=canvas.yview)
+        canvas.pack(side="left", fill="y")
+        inner = tk.Frame(canvas, bg=C_BG)
+        canvas.create_window((0, 0), window=inner, anchor="nw", width=sidebar_w)
+
+        def _autohide(first, last):
+            # полоса прокрутки показывается только когда список реально не влезает
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                vsb.pack_forget()
+            elif not vsb.winfo_ismapped():
+                vsb.pack(side="left", fill="y")
+            vsb.set(first, last)
+
+        canvas.configure(yscrollcommand=_autohide)
+        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _wheel(e):
+            if inner.winfo_reqheight() > canvas.winfo_height():
+                canvas.yview_scroll(-1 if (getattr(e, "delta", 0) > 0 or e.num == 4) else 1, "units")
+
+        canvas.bind("<Enter>", lambda e: (canvas.bind_all("<MouseWheel>", _wheel),
+                                          canvas.bind_all("<Button-4>", _wheel),
+                                          canvas.bind_all("<Button-5>", _wheel)))
+        canvas.bind("<Leave>", lambda e: (canvas.unbind_all("<MouseWheel>"),
+                                          canvas.unbind_all("<Button-4>"),
+                                          canvas.unbind_all("<Button-5>")))
+
+        # --- панель полей выбранной утилиты ---
+        self.content_holder = tk.Frame(mid, bg=C_CARD, highlightthickness=1,
+                                       highlightbackground=C_BORDER)
+        self.content_holder.pack(side="left", fill="x", expand=True, padx=(10, 0))
 
         for i, spec in enumerate(self.specs):
-            b = tk.Label(self.tabbar, text=spec.title, font=UI_FONT_B, padx=22, pady=11,
-                         bg=C_TAB_IDLE, fg=C_INK2, cursor="hand2")
-            b.pack(side="left", padx=(0, 3))
+            b = tk.Label(inner, text=spec.title, font=UI_FONT_B, anchor="w", justify="left",
+                         padx=16, pady=12, bg=C_TAB_IDLE, fg=C_INK2, cursor="hand2",
+                         wraplength=sidebar_w - 32)
+            b.pack(fill="x", pady=(0, 2))
             b.bind("<Button-1>", lambda e, idx=i: self._select_tab(idx))
             b.bind("<Enter>", lambda e, idx=i: self._hover_tab(idx, True))
             b.bind("<Leave>", lambda e, idx=i: self._hover_tab(idx, False))
             self.tab_buttons.append(b)
 
-            page = tk.Frame(holder, bg=C_CARD)
+            page = tk.Frame(self.content_holder, bg=C_CARD)
             page.columnconfigure(1, weight=1)
             tab = UtilityTab(spec)
             self.tabs[spec.id] = tab
             self._build_page(page, tab)
             self.tab_pages.append(page)
 
-        ttk.Button(self.tabbar, text="Сохранить настройки", style="Ghost.TButton",
-                   command=self._save_config).pack(side="right", padx=(6, 0))
+        # Фиксируем высоту рабочей области по самой высокой утилите — иначе при
+        # переключении журнал «прыгает». Ту же высоту получает боковой холст,
+        # поэтому полоса прокрутки меню не мелькает при старте.
+        page_h = 0
+        for pg in self.tab_pages:
+            pg.pack(fill="both", expand=True, padx=22, pady=20)
+            self.update_idletasks()
+            page_h = max(page_h, pg.winfo_reqheight())
+            pg.pack_forget()
+        holder_h = page_h + 40
+        self.content_holder.configure(height=holder_h)
+        self.content_holder.pack_propagate(False)
+        canvas.configure(height=holder_h)
+
         if self.specs:
             self._select_tab(0)
+        self.update_idletasks()
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        canvas.yview_moveto(0)  # пересчитать видимость полосы прокрутки после раскладки
 
     def _select_tab(self, idx: int) -> None:
         self.active_tab = idx
@@ -141,8 +196,9 @@ class App(tk.Tk):
     # ------------------------------------------------ построение вкладки из схемы
     def _build_page(self, page: tk.Frame, tab: UtilityTab) -> None:
         spec = tab.spec
-        ttk.Label(page, style="Hint.TLabel", text=spec.description).grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        # единая ширина описания для всех утилит; текст переносится сам
+        ttk.Label(page, style="Hint.TLabel", text=spec.description, wraplength=650,
+                  justify="left").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
         row = 1
         for p in spec.params:
             if not p.advanced:
@@ -161,8 +217,13 @@ class App(tk.Tk):
             if grouped:
                 row = self._build_group(page, row, tab, grouped)
 
+        # распорка забирает свободную высоту и прижимает ряд кнопок к низу рабочей области
+        tk.Frame(page, bg=C_CARD, height=0).grid(row=row, column=0)
+        page.rowconfigure(row, weight=1)
+        row += 1
+
         bar = tk.Frame(page, bg=C_CARD)
-        bar.grid(row=row, column=0, columnspan=3, sticky="w", pady=(22, 2))
+        bar.grid(row=row, column=0, columnspan=3, sticky="sw", pady=(16, 0))
         for j, a in enumerate(spec.actions):
             btn = ttk.Button(bar, text=a.label, style=a.style,
                              command=lambda s=spec, ac=a: self._run(s, ac))
@@ -171,6 +232,9 @@ class App(tk.Tk):
         tab.open_btn = ttk.Button(bar, text="Открыть результат", style="Ghost.TButton",
                                   state="disabled", command=self._open_last)
         tab.open_btn.pack(side="left", padx=(14, 0))
+        # глобальная кнопка сохранения настроек — в том же ряду, что и действия утилиты
+        ttk.Button(bar, text="Сохранить настройки", style="Ghost.TButton",
+                   command=self._save_config).pack(side="left", padx=(24, 0))
 
     def _build_field(self, page: tk.Frame, row: int, tab: UtilityTab, p) -> int:
         var = tab.make_var(p)

@@ -47,6 +47,14 @@ def build_styles(root: tk.Misc) -> None:
     st.configure("TSpinbox", fieldbackground="white", padding=3)
     st.configure("TSeparator", background=C_BORDER)
 
+    # плоские аккуратные полосы прокрутки (светлая — для меню, тёмная — для журнала)
+    st.configure("TScrollbar", troughcolor=C_BG, background="#c3cad6",
+                 bordercolor=C_BG, arrowcolor=C_INK2, relief="flat", borderwidth=0)
+    st.map("TScrollbar", background=[("active", "#aab2c0")])
+    st.configure("Log.Vertical.TScrollbar", troughcolor=C_LOG_BG, background="#39414f",
+                 bordercolor=C_LOG_BG, arrowcolor=C_LOG_FG, relief="flat", borderwidth=0)
+    st.map("Log.Vertical.TScrollbar", background=[("active", "#4b586b")])
+
     st.configure("TButton", font=UI_FONT, padding=(12, 7))
     st.configure("Ghost.TButton", font=UI_FONT, padding=(12, 7),
                  background="#e4e9f2", foreground=C_INK, bordercolor=C_BORDER)

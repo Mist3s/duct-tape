@@ -31,15 +31,22 @@ class LogPanel:
 
         box = tk.Frame(frame, bg=C_LOG_BG, highlightthickness=1, highlightbackground=C_BORDER)
         box.pack(fill="both", expand=True, pady=(4, 0))
-        sb = ttk.Scrollbar(box)
-        sb.pack(side="right", fill="y")
+        self._sb = ttk.Scrollbar(box, style="Log.Vertical.TScrollbar")
         self.text = tk.Text(box, bg=C_LOG_BG, fg=C_LOG_FG, insertbackground=C_LOG_FG,
                             font=MONO_FONT, wrap="none", relief="flat",
-                            yscrollcommand=sb.set, state="disabled", padx=8, pady=6)
+                            yscrollcommand=self._autohide, state="disabled", padx=8, pady=6)
         self.text.pack(side="left", fill="both", expand=True)
-        sb.config(command=self.text.yview)
+        self._sb.config(command=self.text.yview)
         self.text.tag_config("err", foreground="#ff8080")
         self.text.tag_config("ok", foreground="#8fe0a0")
+
+    def _autohide(self, first: str, last: str) -> None:
+        # полоса прокрутки журнала видна только когда есть что прокручивать
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            self._sb.pack_forget()
+        elif not self._sb.winfo_ismapped():
+            self._sb.pack(side="right", fill="y", before=self.text)
+        self._sb.set(first, last)
 
     def write(self, line: str, tag: str | None = None) -> None:
         self.text.config(state="normal")
