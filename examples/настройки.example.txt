@@ -1,0 +1,24 @@
+# Пример файла настроек программы «Обработка реестров ОМС».
+# Скопируйте рядом с программой под именем «настройки.txt» (или просто запустите
+# программу — она создаст его сама). Формат: ключ = значение. Пути оставлены пустыми.
+
+# --- Удаление по протоколам ---
+talons.dir =
+talons.common =
+talons.field = KOD_TALON
+
+# --- Удаление по списку кодов ---
+codes.dir =
+codes.codes_file =
+codes.field = KOD_TALON
+codes.min_len = 6
+codes.max_len = 12
+
+# --- Статистика стационара ---
+stat.target =
+stat.day_kotd = 10,15
+stat.field_kotd = KOTD
+stat.field_kmkb = KMKB
+stat.field_stoim = STOIM
+stat.field_ishod = ISHOD
+stat.field_fact = FACT

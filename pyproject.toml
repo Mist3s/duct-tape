@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "omsreg"
+dynamic = ["version"]
+description = "Инструменты обработки DBF-реестров ОМС (удаление ошибочных талонов, удаление по списку кодов, статистика стационара) с единым графическим интерфейсом."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Ivanov Andrey" }]
+keywords = ["dbf", "oms", "омс", "medical-insurance", "registry", "tkinter"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Environment :: X11 Applications",
+    "Intended Audience :: Healthcare Industry",
+    "Natural Language :: Russian",
+    "Topic :: Office/Business",
+]
+dependencies = []  # чистая стандартная библиотека; tkinter поставляется вместе с CPython
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.4"]
+build = ["pyinstaller>=6"]
+
+[project.urls]
+Homepage = "https://github.com/umbrella-trade/duct-tape"
+Issues = "https://github.com/umbrella-trade/duct-tape/issues"
+
+[project.scripts]
+omsreg = "omsreg.cli:main"
+omsreg-gui = "omsreg.gui.app:main"
+omsreg-remove-talons = "omsreg.utils.remove_error_talons:main"
+omsreg-remove-codes = "omsreg.utils.remove_codes:main"
+omsreg-stat = "omsreg.utils.stat_stacionar:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "omsreg.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]  # длинные строки в форматировании отчётов допустимы
