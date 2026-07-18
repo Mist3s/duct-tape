@@ -1,6 +1,6 @@
-<img src="src/omsreg/gui/assets/icon.png" width="96" alt="omsreg — синяя изолента">
+<img src="src/omsreg/gui/assets/icon.png" width="96" alt="duct-tape — синяя изолента">
 
-# omsreg — обработка DBF-реестров ОМС
+# duct-tape — обработка DBF-реестров ОМС
 
 Набор утилит для работы с DBF-реестрами обязательного медицинского страхования
 под единым графическим интерфейсом. Проект — платформа: новые утилиты добавляются
@@ -71,7 +71,7 @@ omsreg-stat          ...
 scripts\build-exe.bat
 ```
 
-Получится один файл `dist\omsreg.exe`, который работает без установленного Python.
+Получится один файл `dist\duct-tape.exe`, который работает без установленного Python.
 На каждый тег `v*` тот же EXE собирается автоматически в GitHub Actions
 (`.github/workflows/build-exe.yml`).
 

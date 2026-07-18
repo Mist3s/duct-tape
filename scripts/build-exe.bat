@@ -1,5 +1,5 @@
 @echo off
-rem Сборка программы в один файл omsreg.exe (нужен Python и интернет для PyInstaller).
+rem Сборка программы в один файл duct-tape.exe (нужен Python и интернет для PyInstaller).
 chcp 65001 >nul
 set "ROOT=%~dp0.."
 cd /d "%ROOT%"
@@ -7,7 +7,7 @@ set PY=python
 where python >nul 2>nul || set PY=py
 
 echo ============================================================
-echo   Сборка программы в один файл dist\omsreg.exe
+echo   Сборка программы в один файл dist\duct-tape.exe
 echo ============================================================
 echo.
 echo [1/2] Проверка/установка PyInstaller...
@@ -17,7 +17,7 @@ if errorlevel 1 goto err
 echo.
 echo [2/2] Сборка (займёт 1-2 минуты)...
 %PY% -m PyInstaller --noconfirm --clean --onefile --windowed ^
-  --name omsreg --paths src ^
+  --name duct-tape --paths src ^
   --icon src\omsreg\gui\assets\icon.ico ^
   --add-data "src\omsreg\gui\assets\icon.png;omsreg\gui\assets" ^
   --collect-submodules omsreg.gui.plugins ^
@@ -25,8 +25,8 @@ echo [2/2] Сборка (займёт 1-2 минуты)...
 if errorlevel 1 goto err
 
 echo.
-if exist "dist\omsreg.exe" (
-  echo ГОТОВО. Файл: dist\omsreg.exe
+if exist "dist\duct-tape.exe" (
+  echo ГОТОВО. Файл: dist\duct-tape.exe
   echo Его можно скопировать на любой компьютер с Windows - Python там уже НЕ нужен.
 ) else (
   echo Похоже, сборка не создала exe - смотрите сообщения выше.

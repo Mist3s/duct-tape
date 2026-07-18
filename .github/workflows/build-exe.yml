@@ -21,7 +21,7 @@ jobs:
       - name: Build one-file EXE
         run: >
           pyinstaller --noconfirm --clean --onefile --windowed
-          --name omsreg --paths src
+          --name duct-tape --paths src
           --icon src/omsreg/gui/assets/icon.ico
           --add-data "src/omsreg/gui/assets/icon.png;omsreg/gui/assets"
           --collect-submodules omsreg.gui.plugins
@@ -29,10 +29,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: omsreg-exe
-          path: dist/omsreg.exe
+          name: duct-tape-exe
+          path: dist/duct-tape.exe
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/omsreg.exe
+          files: dist/duct-tape.exe
