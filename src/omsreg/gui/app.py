@@ -34,13 +34,30 @@ from omsreg.gui.theme import (
     C_CARD,
     C_HEADER,
     C_HEADER_SUB,
+    C_INK,
     C_INK2,
     C_TAB_IDLE,
+    MONO_FONT,
     TITLE_FONT,
     UI_FONT,
     UI_FONT_B,
     build_styles,
 )
+
+
+class TextAreaVar:
+    """Обёртка над tk.Text с интерфейсом как у tk.Variable (get/set) — чтобы
+    многострочное поле встраивалось в общий механизм чтения значений и настроек."""
+
+    def __init__(self, text_widget):
+        self._t = text_widget
+
+    def get(self) -> str:
+        return self._t.get("1.0", "end-1c")
+
+    def set(self, value) -> None:
+        self._t.delete("1.0", "end")
+        self._t.insert("1.0", str(value))
 
 
 class UtilityTab:
@@ -63,8 +80,8 @@ class App(tk.Tk):
     def __init__(self, specs: list[UtilitySpec] | None = None):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("1120x780")
-        self.minsize(1000, 650)
+        self.geometry("1120x880")
+        self.minsize(1000, 720)
         self.configure(bg=C_BG)
         self._set_window_icon()
 
@@ -249,6 +266,8 @@ class App(tk.Tk):
                    command=self._save_config).pack(side="right")
 
     def _build_field(self, page: tk.Frame, row: int, tab: UtilityTab, p) -> int:
+        if p.kind is ParamKind.TEXTAREA:
+            return self._build_textarea(page, row, tab, p)
         var = tab.make_var(p)
         tab.vars[p.key] = var
         pady = (10, 0)
@@ -289,6 +308,42 @@ class App(tk.Tk):
         if p.hint:
             ttk.Label(page, text=p.hint, style="Hint.TLabel").grid(
                 row=row, column=1, columnspan=2, sticky="w")
+            row += 1
+        return row
+
+    def _build_textarea(self, page: tk.Frame, row: int, tab: UtilityTab, p) -> int:
+        """Многострочное поле ввода (tk.Text с прокруткой) — напр. вставка списка кодов."""
+        # без подписи (пустой label) поле растягивается на всю ширину рабочей области
+        if p.label:
+            ttk.Label(page, text=p.label, style="Field.TLabel").grid(
+                row=row, column=0, sticky="nw", padx=(0, 12), pady=(12, 0))
+            box_col, box_span = 1, 2
+        else:
+            box_col, box_span = 0, 3
+        box = tk.Frame(page, bg=C_CARD, highlightthickness=1, highlightbackground=C_BORDER)
+        box.grid(row=row, column=box_col, columnspan=box_span, sticky="ew", pady=(12, 0))
+        sb = ttk.Scrollbar(box)
+        txt = tk.Text(box, height=p.height or 6, wrap="word", font=MONO_FONT, relief="flat",
+                      bg="white", fg=C_INK, insertbackground=C_INK, undo=True, padx=8, pady=6)
+
+        def _autohide(first, last):
+            # полоса прокрутки видна только когда есть что прокручивать
+            if float(first) <= 0.0 and float(last) >= 1.0:
+                sb.pack_forget()
+            elif not sb.winfo_ismapped():
+                sb.pack(side="right", fill="y", before=txt)
+            sb.set(first, last)
+
+        txt.configure(yscrollcommand=_autohide)
+        sb.config(command=txt.yview)
+        txt.pack(side="left", fill="both", expand=True)
+        if p.default:
+            txt.insert("1.0", str(p.default))
+        tab.vars[p.key] = TextAreaVar(txt)
+        row += 1
+        if p.hint:
+            ttk.Label(page, text=p.hint, style="Hint.TLabel").grid(
+                row=row, column=box_col, columnspan=box_span, sticky="w")
             row += 1
         return row
 

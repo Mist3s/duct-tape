@@ -33,6 +33,22 @@ def test_run_stat_outputs_and_split(make_dbf, registry_fields, tmp_path):
     assert "Круглосуточный стационар" in res["text"]
 
 
+def test_outcomes_by_stationar_and_department(make_dbf, registry_fields, tmp_path):
+    rows = [
+        _row("1", "10", "A00", "100.00", "1"),    # дневной
+        _row("2", "27", "I11.9", "200.00", "1"),  # круглосуточный, терапия
+        _row("3", "27", "I25.5", "300.00", "5"),
+    ]
+    dbf = make_dbf(tmp_path / "s.dbf", registry_fields, rows)
+    res = run_stat(str(dbf), "10", console=False)
+    txt = res["text"]
+    assert "ИСХОДЫ ПО СТАЦИОНАРАМ И ОТДЕЛЕНИЯМ" in txt
+    assert "27 — Терапевтическое" in txt          # название отделения из KOTD_NAMES
+    html = res["html_path"].read_text(encoding="utf-8")
+    assert "Исходы по отделениям" in html
+    assert "Терапевтическое" in html
+
+
 def test_deleted_records_excluded(make_dbf, registry_fields, tmp_path):
     rows = [_row("1", "10", "A00", "100.00", "1"), _row("2", "10", "A00", "100.00", "1")]
     dbf = make_dbf(tmp_path / "s.dbf", registry_fields, rows, deleted=[False, True])

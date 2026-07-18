@@ -12,7 +12,8 @@ def _run(ctx: RunContext) -> JobResult:
     p = ctx.params
     fields = {"kotd": p["field_kotd"], "kmkb": p["field_kmkb"], "stoim": p["field_stoim"],
               "ishod": p["field_ishod"], "fact": p["field_fact"]}
-    res = stat.run_stat(p["target"], p["day_kotd"] or "10,15", fields,
+    kotd_names = stat.parse_kotd_names(p.get("kotd_names", ""))
+    res = stat.run_stat(p["target"], p["day_kotd"] or "10,15", fields, kotd_names,
                         extra_handlers=[ctx.log_handler], console=False)
     return JobResult(
         summary=(f"Готово. Случаев: {res['cases']}. Файлы: "
@@ -44,6 +45,10 @@ SPEC = UtilitySpec(
                   default="10,15", width=18,
                   hint="через запятую; остальные отделения — круглосуточный стационар",
                   legacy_key="дневной_стационар_коды"),
+        ParamSpec("kotd_names", "Названия отделений:", ParamKind.TEXT, advanced=True,
+                  default=stat.format_kotd_names(stat.KOTD_NAMES),
+                  hint="формат: 23=Пульмонологическое; 27=Терапевтическое; 61=Неврологическое",
+                  legacy_key="названия_отделений"),
         _field("field_kotd", "Отделение (KOTD):", "kotd", "поле_отделение"),
         _field("field_kmkb", "Код МКБ:", "kmkb", "поле_мкб"),
         _field("field_stoim", "Стоимость:", "stoim", "поле_стоимость"),

@@ -16,12 +16,13 @@ from typing import Any, Callable
 
 
 class ParamKind(Enum):
-    DIR = "dir"     # папка   -> поле ввода + «Обзор…» (askdirectory)
-    FILE = "file"   # файл    -> поле ввода + «Обзор…» (askopenfilename)
-    PATH = "path"   # файл ИЛИ папка -> поле ввода + две кнопки «Файл…»/«Папка…»
-    TEXT = "text"   # строка  -> ttk.Entry
-    INT = "int"     # целое   -> ttk.Spinbox
-    BOOL = "bool"   # флажок  -> ttk.Checkbutton
+    DIR = "dir"           # папка   -> поле ввода + «Обзор…» (askdirectory)
+    FILE = "file"         # файл    -> поле ввода + «Обзор…» (askopenfilename)
+    PATH = "path"         # файл ИЛИ папка -> поле ввода + «Файл…»/«Папка…»
+    TEXT = "text"         # строка  -> ttk.Entry
+    TEXTAREA = "textarea"  # многострочный текст -> tk.Text с прокруткой
+    INT = "int"           # целое   -> ttk.Spinbox
+    BOOL = "bool"         # флажок  -> ttk.Checkbutton
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class ParamSpec:
     max: int = 999_999                         # для INT (ttk.Spinbox to)
     group: str | None = None                # поля одного group кладутся сеткой 2-в-ряд
     width: int | None = None                # фикс. ширина поля ввода
+    height: int | None = None               # число строк для TEXTAREA
     require_msg: str | None = None          # текст предупреждения, если пусто
     legacy_key: str | None = None           # старый ключ из настройки.txt (миграция)
 

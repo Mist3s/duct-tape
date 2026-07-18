@@ -1,5 +1,8 @@
 """Удаление по списку кодов из всех DBF папки: dry-run, реальное удаление, спутники."""
 
+import pytest
+
+from omsreg.core import JobError
 from omsreg.core.dbf import DbfTable
 from omsreg.utils.remove_codes import run_codes
 
@@ -43,6 +46,31 @@ def test_real_delete_across_files_and_companions(make_dbf, registry_fields, tmp_
     backup = next(tmp_path.glob("backup_*"))
     names = {p.name for p in backup.iterdir()}
     assert "a.dbf" in names and "a.cdx" in names
+
+
+def test_codes_from_pasted_text(make_dbf, registry_fields, tmp_path):
+    a = make_dbf(tmp_path / "a.dbf", registry_fields, _rows(["111111", "222222", "333333"]))
+    # коды заданы прямо строкой (как при вставке в интерфейсе), файла нет
+    res = run_codes(str(tmp_path), codes_text="111111, 333333\n", console=False)
+    assert res["had_error"] is False
+    assert res["deleted_total"] == 2
+    ta = DbfTable(a)
+    assert sorted(ta.code_value(r, "KOD_TALON") for r in ta.records) == [222222]
+
+
+def test_pasted_text_takes_priority_over_file(make_dbf, registry_fields, tmp_path):
+    a = make_dbf(tmp_path / "a.dbf", registry_fields, _rows(["111111", "222222"]))
+    (tmp_path / "codes.txt").write_text("222222\n", encoding="utf-8")  # файл сказал бы удалить 222222
+    res = run_codes(str(tmp_path), "codes.txt", codes_text="111111", console=False)
+    assert res["deleted_total"] == 1
+    ta = DbfTable(a)
+    assert sorted(ta.code_value(r, "KOD_TALON") for r in ta.records) == [222222]  # удалён 111111
+
+
+def test_no_codes_source_raises(make_dbf, registry_fields, tmp_path):
+    make_dbf(tmp_path / "a.dbf", registry_fields, _rows(["111111"]))
+    with pytest.raises(JobError):
+        run_codes(str(tmp_path), console=False)
 
 
 def test_all_files_missing_field_reports_error(make_dbf, tmp_path):

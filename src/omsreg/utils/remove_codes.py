@@ -29,7 +29,7 @@ from pathlib import Path
 
 from omsreg.core import TALON_FIELD_DEFAULT, DbfTable, JobError, setup_job_logging
 from omsreg.core.backup import save_and_verify
-from omsreg.core.textio import read_codes_file
+from omsreg.core.textio import extract_code_tokens, read_codes_file
 
 MIN_CODE_LEN = 6   # числа короче не считаем кодами (даты, телефоны, нумерация строк)
 MAX_CODE_LEN = 12  # числа длиннее не считаем кодами (например, 16-значный полис)
@@ -118,14 +118,20 @@ def resolve_codes_path(directory, codes_file) -> Path:
     raise JobError(f"Файл со списком кодов не найден: {codes_path}")
 
 
-def run_codes(directory, codes_file, field=TALON_FIELD_DEFAULT, dry_run=False,
-              min_len=MIN_CODE_LEN, max_len=MAX_CODE_LEN,
+def run_codes(directory, codes_file=None, field=TALON_FIELD_DEFAULT, dry_run=False,
+              min_len=MIN_CODE_LEN, max_len=MAX_CODE_LEN, codes_text=None,
               extra_handlers=None, console=True) -> dict:
-    """Удаление записей со списком кодов из всех DBF папки. Возвращает словарь с итогами."""
+    """Удаление записей со списком кодов из всех DBF папки. Возвращает словарь с итогами.
+    Источник кодов: непустой codes_text (вставленный/введённый список) имеет приоритет,
+    иначе читается файл codes_file. Должно быть задано что-то одно."""
     directory = Path(directory)
     if not directory.is_dir():
         raise JobError(f"Папка не найдена: {directory}")
-    codes_path = resolve_codes_path(directory, codes_file)
+
+    use_text = bool(codes_text and codes_text.strip())
+    if not use_text and not codes_file:
+        raise JobError("Не указан ни файл со списком кодов, ни введённый список кодов.")
+    codes_path = None if use_text else resolve_codes_path(directory, codes_file)
 
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = directory / f"udalenie_kodov_{ts}.log"
@@ -133,20 +139,25 @@ def run_codes(directory, codes_file, field=TALON_FIELD_DEFAULT, dry_run=False,
 
     log.info("=" * 78)
     log.info("Запуск: папка %s%s", directory.resolve(), "  [РЕЖИМ ПРОВЕРКИ]" if dry_run else "")
-    log.info("Файл со списком кодов: %s", codes_path.resolve())
+    log.info("Источник кодов: %s", "введённый список (вставлен в программе)"
+             if use_text else f"файл {codes_path.resolve()}")
     log.info("Лог-файл: %s", log_path)
 
     # -------- шаг 1: чтение списка кодов --------
     log.info("=" * 78)
     log.info("ШАГ 1. Чтение списка кодов (принимаются числа длиной %d-%d цифр)", min_len, max_len)
     try:
-        codes_list, enc, too_long, too_short = read_codes_file(codes_path, min_len, max_len)
+        if use_text:
+            codes_list, too_long, too_short = extract_code_tokens(codes_text, min_len, max_len)
+            enc = "введён в программе"
+        else:
+            codes_list, enc, too_long, too_short = read_codes_file(codes_path, min_len, max_len)
     except ValueError as e:
         log.error("  %s", e)
         raise JobError(str(e)) from e
     codes = set(codes_list)
     dup = len(codes_list) - len(codes)
-    log.info("  кодировка файла: %s", enc)
+    log.info("  источник: %s", enc)
     log.info("  прочитано кодов: %d (уникальных: %d%s)",
              len(codes_list), len(codes), f", повторов: {dup}" if dup else "")
     if codes:
@@ -158,17 +169,19 @@ def run_codes(directory, codes_file, field=TALON_FIELD_DEFAULT, dry_run=False,
         log.warning("  пропущены числа короче %d цифр (даты, телефоны, нумерация и т.п.): %s",
                     min_len, ", ".join(too_short[:20]) + ("..." if len(too_short) > 20 else ""))
     if not codes:
-        msg = "В файле не найдено ни одного кода талона."
+        msg = ("В введённом списке нет ни одного кода талона." if use_text
+               else "В файле не найдено ни одного кода талона.")
         log.error("  %s", msg)
         raise JobError(msg)
     if len(too_long) + len(too_short) > len(codes_list):
         log.warning("  ВНИМАНИЕ: пропущенных чисел больше, чем принятых кодов — "
-                    "убедитесь, что указан правильный файл со списком кодов!")
+                    "убедитесь, что список кодов правильный!")
 
     # -------- шаг 2: проход по всем DBF --------
     dbf_files = sorted(
         (p for p in directory.iterdir()
-         if p.is_file() and p.suffix.lower() == ".dbf" and p.resolve() != codes_path.resolve()),
+         if p.is_file() and p.suffix.lower() == ".dbf"
+         and (codes_path is None or p.resolve() != codes_path.resolve())),
         key=lambda p: p.name.lower(),
     )
     if not dbf_files:

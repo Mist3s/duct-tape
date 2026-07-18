@@ -10,8 +10,8 @@ from omsreg.utils import remove_codes as codes
 def _run(ctx: RunContext) -> JobResult:
     p = ctx.params
     r = codes.run_codes(
-        p["dir"], p["codes_file"], p.get("field") or TALON_FIELD_DEFAULT, p["dry"],
-        int(p["min_len"]), int(p["max_len"]),
+        p["dir"], p.get("codes_file") or None, p.get("field") or TALON_FIELD_DEFAULT, p["dry"],
+        int(p["min_len"]), int(p["max_len"]), codes_text=p.get("codes_text") or None,
         extra_handlers=[ctx.log_handler], console=False,
     )
     n, files = r["deleted_total"], r["files_changed"]
@@ -36,6 +36,8 @@ def _confirm(p: dict) -> str:
 def _validate(p: dict) -> str | None:
     if int(p["min_len"]) > int(p["max_len"]):
         return "Минимальная длина кода больше максимальной."
+    if not (p.get("codes_file", "").strip() or p.get("codes_text", "").strip()):
+        return "Укажите файл со списком кодов ИЛИ вставьте коды в поле ниже."
     return None
 
 
@@ -44,15 +46,19 @@ SPEC = UtilitySpec(
     order=20,
     title="Удаление по списку кодов",
     description=(
-        "Коды талонов из текстового файла удаляются из ВСЕХ DBF-файлов папки, где есть поле кода. "
-        "Список кодов — числа в файле (по одному в строке или через пробел/запятую)."
+        "Коды талонов удаляются из ВСЕХ DBF-файлов папки, где есть поле кода. Список кодов "
+        "можно указать файлом ИЛИ вставить/ввести прямо в программе (поле ниже) — числа по "
+        "одному в строке либо через пробел/запятую. Если поле заполнено, берётся оно."
     ),
     params=(
         ParamSpec("dir", "Папка с DBF-файлами:", ParamKind.DIR, required=True,
                   require_msg="Укажите папку с DBF-файлами.", legacy_key="папка_коды"),
-        ParamSpec("codes_file", "Файл со списком кодов:", ParamKind.FILE, required=True,
+        ParamSpec("codes_file", "Файл со списком кодов:", ParamKind.FILE,
                   filetypes=(("Текст", "*.txt"), ("Все файлы", "*.*")),
-                  require_msg="Укажите файл со списком кодов.", legacy_key="файл_кодов"),
+                  hint="или вставьте/введите коды в поле ниже — тогда файл не нужен",
+                  legacy_key="файл_кодов"),
+        ParamSpec("codes_text", "", ParamKind.TEXTAREA, height=5, persist=False,
+                  hint="по одному в строке или через пробел/запятую; при заполнении имеет приоритет над файлом"),
         ParamSpec("field", "Поле кода талона:", ParamKind.TEXT, default=TALON_FIELD_DEFAULT,
                   advanced=True, width=18, legacy_key="поле_кода_талона_список"),
         ParamSpec("min_len", "Длина кода, цифр: от", ParamKind.INT, default=6,

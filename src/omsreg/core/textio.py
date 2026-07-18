@@ -89,6 +89,14 @@ def read_codes_file(path: Path, min_len: int, max_len: int):
             # для цифр (ASCII) однобайтовые кодировки неразличимы — не утверждаем лишнего
             enc = "однобайтовая (cp1251/cp866)"
 
+    codes, too_long, too_short = extract_code_tokens(text, min_len, max_len)
+    return codes, enc, too_long, too_short
+
+
+def extract_code_tokens(text: str, min_len: int, max_len: int):
+    """Извлекает из текста числа-коды длиной [min_len, max_len]. Возвращает
+    (список int-кодов по порядку, слишком длинные, слишком короткие). Используется
+    и при чтении файла, и при вводе кодов прямо в программе."""
     codes, too_long, too_short = [], [], []
     for token in re.findall(r"\d+", text):
         if len(token) > max_len:
@@ -97,4 +105,4 @@ def read_codes_file(path: Path, min_len: int, max_len: int):
             too_short.append(token)
         else:
             codes.append(int(token))
-    return codes, enc, too_long, too_short
+    return codes, too_long, too_short

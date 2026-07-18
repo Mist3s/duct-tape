@@ -42,6 +42,35 @@ ISHOD_NAMES = {
 DAY_TYPE = "Дневной стационар"
 ROUND_TYPE = "Круглосуточный стационар"
 
+# Названия отделений по коду KOTD — значение по умолчанию. Коды специфичны для
+# учреждения, поэтому названия настраиваются (поле в интерфейсе / --kotd-names /
+# аргумент kotd_names у run_stat); этот словарь используется, если ничего не задано.
+KOTD_NAMES = {
+    23: "Пульмонологическое",
+    27: "Терапевтическое",
+    61: "Неврологическое",
+}
+
+
+def parse_kotd_names(s) -> dict:
+    """Разбирает строку настроек «код=название» (пары через ';' или перевод строки)
+    в словарь {int(код): название}. Пустое/некорректное игнорируется."""
+    names: dict[int, str] = {}
+    for part in str(s or "").replace("\n", ";").split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if k.isdigit() and v:
+            names[int(k)] = v
+    return names
+
+
+def format_kotd_names(names: dict) -> str:
+    """Обратное к parse_kotd_names: словарь -> «код=название; код=название»."""
+    return "; ".join(f"{k}={v}" for k, v in sorted(names.items()))
+
 # имена полей DBF по умолчанию (можно переопределить в интерфейсе/через run_stat)
 DEFAULT_FIELDS = {"kotd": "KOTD", "kmkb": "KMKB", "stoim": "STOIM",
                   "ishod": "ISHOD", "fact": "FACT"}
@@ -68,6 +97,15 @@ def ishod_name(code) -> str:
     if code is None:
         return "(не указан)"
     return f"{code} — {ISHOD_NAMES.get(code, 'неизвестный исход')}"
+
+
+def kotd_name(code, names=None) -> str:
+    """Код отделения с названием, если оно известно: '27 — Терапевтическое'.
+    names — словарь {код: название}; по умолчанию берётся встроенный KOTD_NAMES."""
+    if code is None:
+        return "?"
+    name = (KOTD_NAMES if names is None else names).get(code)
+    return f"{code} — {name}" if name else str(code)
 
 
 # ----------------------------- сбор статистики -----------------------------
@@ -99,8 +137,9 @@ def collect(table: DbfTable, day_kotd, fields=None):
     return cases, deleted, has_fact
 
 
-def build_report(dbf_path, cases, deleted, has_fact, day_kotd, total_in_file):
-    """Строит текстовый отчёт (список строк) и данные для CSV (список списков)."""
+def build_report(dbf_path, cases, deleted, has_fact, day_kotd, total_in_file, names=None):
+    """Строит текстовый отчёт (список строк) и данные для CSV (список списков).
+    names — словарь названий отделений {код: название}; None -> встроенный KOTD_NAMES."""
     out = []
     csv_rows = [["тип стационара", "KMKB", "код исхода", "исход",
                  "случаев", "сумма STOIM", "средняя стоимость",
@@ -150,10 +189,10 @@ def build_report(dbf_path, cases, deleted, has_fact, day_kotd, total_in_file):
         by_kotd[(c[0], c[1])].append(c)
     w("")
     w("ПО ОТДЕЛЕНИЯМ (KOTD)")
-    w(f"  {'KOTD':>5}  {'тип':<28} {'случаев':>8} {'сумма STOIM':>18} {'средняя':>14}")
+    w(f"  {'отделение':<28} {'тип':<26} {'случаев':>8} {'сумма STOIM':>18} {'средняя':>14}")
     for (st, kotd), cs in sorted(by_kotd.items(), key=lambda kv: (kv[0][0], kv[0][1] or 0)):
         s = sum(c[4] for c in cs)
-        w(f"  {kotd if kotd is not None else '?':>5}  {st:<28} {len(cs):>8} "
+        w(f"  {kotd_name(kotd, names):<28} {st:<26} {len(cs):>8} "
           f"{money(s):>18} {money(s / len(cs)):>14}")
 
     # ---------- по исходам (весь файл) ----------
@@ -169,6 +208,38 @@ def build_report(dbf_path, cases, deleted, has_fact, day_kotd, total_in_file):
         costs = [c[4] for c in cs]
         w(f"  {ishod_name(ish):<40} {len(cs):>8} {pct(len(cs), n):>7} {money(s):>18}"
           f" {money(min(costs)):>14} {money(max(costs)):>14}")
+
+    # ---------- исходы по стационарам и отделениям ----------
+    def _outcomes(subset, indent):
+        by_ish = defaultdict(list)
+        for c in subset:
+            by_ish[c[3]].append(c)
+        for ish, cs in sorted(by_ish.items(), key=lambda kv: -len(kv[1])):
+            s = sum(c[4] for c in cs)
+            costs = [c[4] for c in cs]
+            w(f"{indent}{ishod_name(ish):<40} {len(cs):>5} {pct(len(cs), len(subset)):>7} "
+              f"{money(s):>16}  мин {money(min(costs)):>12}  макс {money(max(costs)):>12}")
+
+    w("")
+    w("=" * 100)
+    w("ИСХОДЫ ПО СТАЦИОНАРАМ И ОТДЕЛЕНИЯМ")
+    w("=" * 100)
+    for st in (DAY_TYPE, ROUND_TYPE):
+        cs_type = by_type.get(st, [])
+        if not cs_type:
+            continue
+        w("")
+        w(f"{st.upper()} — случаев {len(cs_type)}, сумма {money(sum(c[4] for c in cs_type))}")
+        w("  по исходам (весь стационар):")
+        _outcomes(cs_type, "    ")
+        by_kotd_t = defaultdict(list)
+        for c in cs_type:
+            by_kotd_t[c[1]].append(c)
+        for kotd in sorted(by_kotd_t, key=lambda k: (k is None, k)):
+            cs_k = by_kotd_t[kotd]
+            w(f"  отделение {kotd_name(kotd, names)} — случаев {len(cs_k)}, "
+              f"сумма {money(sum(c[4] for c in cs_k))}:")
+            _outcomes(cs_k, "      ")
 
     # ---------- главные таблицы: стационар -> KMKB -> ISHOD ----------
     for st in (DAY_TYPE, ROUND_TYPE):
@@ -230,8 +301,9 @@ def build_report(dbf_path, cases, deleted, has_fact, day_kotd, total_in_file):
 
 # ----------------------------- HTML-отчёт -----------------------------
 
-def build_html(dbf_path, cases, deleted, has_fact, day_kotd, total_in_file) -> str:
-    """Строит самодостаточный HTML-отчёт (строка). Цифры те же, что в текстовом отчёте."""
+def build_html(dbf_path, cases, deleted, has_fact, day_kotd, total_in_file, names=None) -> str:
+    """Строит самодостаточный HTML-отчёт (строка). Цифры те же, что в текстовом отчёте.
+    names — словарь названий отделений {код: название}; None -> встроенный KOTD_NAMES."""
     e = html.escape
     n = len(cases)
     total_sum = sum(c[4] for c in cases)
@@ -343,12 +415,12 @@ body.no-ishod tr.ishod {{ display: none; }}
     for c in cases:
         by_kotd[(c[0], c[1])].append(c)
     p('<h2>По отделениям (KOTD)</h2><table class="plain"><thead><tr>'
-      '<th class="num">KOTD</th><th>тип</th><th class="num">случаев</th>'
+      '<th>отделение</th><th>тип</th><th class="num">случаев</th>'
       '<th class="num">средняя</th><th class="num">сумма STOIM (доля)</th></tr></thead><tbody>')
     max_sum = max((sum(c[4] for c in cs) for cs in by_kotd.values()), default=0)
     for (st, kotd), cs in sorted(by_kotd.items(), key=lambda kv: -sum(c[4] for c in kv[1])):
         s = sum(c[4] for c in cs)
-        p(f'<tr><td class="num">{kotd if kotd is not None else "?"}</td><td>{e(st)}</td>'
+        p(f'<tr><td>{e(kotd_name(kotd, names))}</td><td>{e(st)}</td>'
           f'<td class="num">{len(cs)}</td><td class="num">{money(s / len(cs))}</td>'
           + bar(s / max_sum if max_sum else 0, f"{money(s)} ({pct(s, total_sum).strip()})")
           + '</tr>')
@@ -372,6 +444,45 @@ body.no-ishod tr.ishod {{ display: none; }}
           + bar(s / max_sum if max_sum else 0, f"{money(s)} ({pct(s, total_sum).strip()})")
           + '</tr>')
     p('</tbody></table>')
+
+    # ---------- исходы по стационарам и отделениям ----------
+    def outcome_rows(subset, css):
+        by_ish = defaultdict(list)
+        for c in subset:
+            by_ish[c[3]].append(c)
+        for ish, cs in sorted(by_ish.items(), key=lambda kv: -len(kv[1])):
+            s = sum(c[4] for c in cs)
+            costs = [c[4] for c in cs]
+            p(f'<tr class="{css}"><td>исход {e(ishod_name(ish))}</td>'
+              f'<td class="num">{len(cs)}</td><td class="num">{pct(len(cs), len(subset))}</td>'
+              f'<td class="num">{money(min(costs))}</td><td class="num">{money(max(costs))}</td>'
+              f'<td class="num">{money(s)}</td></tr>')
+
+    for st in (DAY_TYPE, ROUND_TYPE):
+        cs_type = by_type.get(st, [])
+        if not cs_type:
+            continue
+        type_sum = sum(c[4] for c in cs_type)
+        p(f'<h2>Исходы по отделениям — {e(st)} (случаев: {len(cs_type)}, сумма: {money(type_sum)})</h2>')
+        p('<table class="main"><thead><tr><th>отделение / исход</th>'
+          '<th class="num">случаев</th><th class="num">доля</th>'
+          '<th class="num">мин. случай</th><th class="num">макс. случай</th>'
+          '<th class="num">сумма STOIM</th></tr></thead><tbody>')
+        p(f'<tr class="total"><td>Весь стационар</td><td class="num">{len(cs_type)}</td>'
+          f'<td class="num">100.0%</td><td></td><td></td>'
+          f'<td class="num">{money(type_sum)}</td></tr>')
+        outcome_rows(cs_type, "ishod")
+        by_kotd_t = defaultdict(list)
+        for c in cs_type:
+            by_kotd_t[c[1]].append(c)
+        for kotd in sorted(by_kotd_t, key=lambda k: (k is None, k)):
+            cs_k = by_kotd_t[kotd]
+            s_k = sum(c[4] for c in cs_k)
+            p(f'<tr class="diag"><td><b>Отделение {e(kotd_name(kotd, names))}</b></td>'
+              f'<td class="num">{len(cs_k)}</td><td class="num">{pct(len(cs_k), len(cs_type))}</td>'
+              f'<td></td><td></td><td class="num">{money(s_k)}</td></tr>')
+            outcome_rows(cs_k, "ishod")
+        p('</tbody></table>')
 
     # ---------- главные таблицы ----------
     p('<div class="controls"><input id="flt" type="search" placeholder="фильтр по коду МКБ…">'
@@ -457,8 +568,10 @@ def parse_day_kotd(day_kotd_str) -> set:
         raise JobError(f"Некорректный список кодов дневного стационара: {day_kotd_str}") from e
 
 
-def run_stat(target, day_kotd="10,15", fields=None, extra_handlers=None, console=True) -> dict:
+def run_stat(target, day_kotd="10,15", fields=None, kotd_names=None,
+             extra_handlers=None, console=True) -> dict:
     """Строит статистику стационара и сохраняет .txt/.csv/.html рядом с DBF.
+    kotd_names — словарь названий отделений {код: название}; None -> встроенный KOTD_NAMES.
     Прогресс идёт в общий журнал (как у удалялок). Возвращает
     {text, txt_path, csv_path, html_path, log_path, cases}. Фатальные ошибки -> JobError."""
     path = resolve_dbf_path(target)
@@ -480,7 +593,8 @@ def run_stat(target, day_kotd="10,15", fields=None, extra_handlers=None, console
              f", помечено удалёнными и исключено: {deleted}" if deleted else "")
 
     log.info("Строю текстовый отчёт…")
-    report, csv_rows = build_report(path, cases, deleted, has_fact, day_kotd_set, table.nrec)
+    report, csv_rows = build_report(path, cases, deleted, has_fact, day_kotd_set, table.nrec,
+                                    kotd_names)
     text = "\n".join(report)
 
     txt_path = base.with_suffix(".txt")
@@ -492,7 +606,8 @@ def run_stat(target, day_kotd="10,15", fields=None, extra_handlers=None, console
             f.write(";".join(str(x) for x in row) + "\n")
     log.info("Строю HTML-отчёт…")
     html_path.write_text(
-        build_html(path, cases, deleted, has_fact, day_kotd_set, table.nrec), encoding="utf-8")
+        build_html(path, cases, deleted, has_fact, day_kotd_set, table.nrec, kotd_names),
+        encoding="utf-8")
     log.info("Готово. Файлы: %s, %s, %s", txt_path.name, csv_path.name, html_path.name)
 
     return {"text": text, "txt_path": txt_path, "csv_path": csv_path,
@@ -505,9 +620,13 @@ def main() -> None:
     parser.add_argument("dbf", help="DBF-файл (например uu/0091_016.dbf) или папка с одним DBF")
     parser.add_argument("--day-kotd", default="10,15",
                         help="коды отделений дневного стационара через запятую (по умолчанию 10,15)")
+    parser.add_argument("--kotd-names", default=None,
+                        help="названия отделений: «23=Пульмонологическое; 27=Терапевтическое» "
+                             "(по умолчанию встроенные)")
     args = parser.parse_args()
+    kotd_names = parse_kotd_names(args.kotd_names) if args.kotd_names else None
     try:
-        res = run_stat(args.dbf, args.day_kotd)
+        res = run_stat(args.dbf, args.day_kotd, kotd_names=kotd_names)
     except JobError as e:
         print(f"ОШИБКА: {e}", file=sys.stderr)
         sys.exit(2)
