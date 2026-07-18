@@ -31,8 +31,22 @@ jobs:
         with:
           name: duct-tape-exe
           path: dist/duct-tape.exe
+      - name: Extract changelog section for this tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v v="$version" '
+            $0 ~ ("^## \\[" v "\\]") {p=1; next}
+            p && /^## \[/ {exit}
+            p {print}
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          echo "" >> RELEASE_NOTES.md
+          echo "Скачайте \`duct-tape.exe\` ниже — Python не нужен." >> RELEASE_NOTES.md
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
+          body_path: RELEASE_NOTES.md
+          generate_release_notes: true
           files: dist/duct-tape.exe
