@@ -21,7 +21,10 @@ jobs:
       - name: Build one-file EXE
         run: >
           pyinstaller --noconfirm --clean --onefile --windowed
-          --name omsreg --paths src src/omsreg/__main__.py
+          --name omsreg --paths src
+          --icon src/omsreg/gui/assets/icon.ico
+          --add-data "src/omsreg/gui/assets/icon.png;omsreg/gui/assets"
+          src/omsreg/__main__.py
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

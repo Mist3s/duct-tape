@@ -41,6 +41,9 @@ omsreg-stat = "omsreg.utils.stat_stacionar:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"omsreg.gui" = ["assets/*.png", "assets/*.ico"]
+
 [tool.setuptools.dynamic]
 version = { attr = "omsreg.__version__" }
 

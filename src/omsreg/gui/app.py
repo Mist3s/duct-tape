@@ -66,6 +66,7 @@ class App(tk.Tk):
         self.geometry("1120x780")
         self.minsize(1000, 650)
         self.configure(bg=C_BG)
+        self._set_window_icon()
 
         self.specs = specs if specs is not None else discover()
         self.queue: queue.Queue = queue.Queue()
@@ -85,6 +86,17 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ------------------------------------------------ оформление
+    def _set_window_icon(self) -> None:
+        """Иконка окна (рулон синей изоленты). Молча пропускается, если недоступна."""
+        try:
+            from importlib.resources import as_file, files
+
+            with as_file(files("omsreg.gui").joinpath("assets/icon.png")) as path:
+                self._icon_img = tk.PhotoImage(file=str(path))
+            self.iconphoto(True, self._icon_img)
+        except Exception:
+            pass
+
     def _build_header(self) -> None:
         head = tk.Frame(self, bg=C_HEADER)
         head.pack(fill="x", side="top")
