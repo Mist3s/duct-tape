@@ -29,7 +29,7 @@
 Нужен Python 3.9 или новее.
 
 ```bash
-git clone https://github.com/umbrella-trade/duct-tape.git
+git clone https://github.com/Mist3s/duct-tape.git
 cd duct-tape
 pip install -e .
 ```

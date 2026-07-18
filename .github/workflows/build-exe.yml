@@ -5,6 +5,9 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: write  # нужно, чтобы прикрепить exe к GitHub Release по тегу
+
 jobs:
   windows-exe:
     runs-on: windows-latest

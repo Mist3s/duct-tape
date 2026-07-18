@@ -28,8 +28,8 @@ dev = ["pytest>=7", "ruff>=0.4"]
 build = ["pyinstaller>=6"]
 
 [project.urls]
-Homepage = "https://github.com/umbrella-trade/duct-tape"
-Issues = "https://github.com/umbrella-trade/duct-tape/issues"
+Homepage = "https://github.com/Mist3s/duct-tape"
+Issues = "https://github.com/Mist3s/duct-tape/issues"
 
 [project.scripts]
 omsreg = "omsreg.cli:main"
