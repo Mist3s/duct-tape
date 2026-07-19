@@ -46,6 +46,9 @@ ROUND_TYPE = "Круглосуточный стационар"
 # учреждения, поэтому названия настраиваются (поле в интерфейсе / --kotd-names /
 # аргумент kotd_names у run_stat); этот словарь используется, если ничего не задано.
 KOTD_NAMES = {
+    10: "Мусоргского",
+    12: "ВОП",
+    15: "Сельма",
     23: "Пульмонологическое",
     27: "Терапевтическое",
     61: "Неврологическое",
@@ -568,7 +571,7 @@ def parse_day_kotd(day_kotd_str) -> set:
         raise JobError(f"Некорректный список кодов дневного стационара: {day_kotd_str}") from e
 
 
-def run_stat(target, day_kotd="10,15", fields=None, kotd_names=None,
+def run_stat(target, day_kotd="10,15,12", fields=None, kotd_names=None,
              extra_handlers=None, console=True) -> dict:
     """Строит статистику стационара и сохраняет .txt/.csv/.html рядом с DBF.
     kotd_names — словарь названий отделений {код: название}; None -> встроенный KOTD_NAMES.
@@ -618,7 +621,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Статистика по DBF стационара: дневной/круглосуточный -> МКБ -> исходы.")
     parser.add_argument("dbf", help="DBF-файл (например uu/0091_016.dbf) или папка с одним DBF")
-    parser.add_argument("--day-kotd", default="10,15",
+    parser.add_argument("--day-kotd", default="10,15,12",
                         help="коды отделений дневного стационара через запятую (по умолчанию 10,15)")
     parser.add_argument("--kotd-names", default=None,
                         help="названия отделений: «23=Пульмонологическое; 27=Терапевтическое» "

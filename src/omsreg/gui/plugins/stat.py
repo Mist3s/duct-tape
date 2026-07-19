@@ -13,7 +13,7 @@ def _run(ctx: RunContext) -> JobResult:
     fields = {"kotd": p["field_kotd"], "kmkb": p["field_kmkb"], "stoim": p["field_stoim"],
               "ishod": p["field_ishod"], "fact": p["field_fact"]}
     kotd_names = stat.parse_kotd_names(p.get("kotd_names", ""))
-    res = stat.run_stat(p["target"], p["day_kotd"] or "10,15", fields, kotd_names,
+    res = stat.run_stat(p["target"], p["day_kotd"] or "10,15,12", fields, kotd_names,
                         extra_handlers=[ctx.log_handler], console=False)
     return JobResult(
         summary=(f"Готово. Случаев: {res['cases']}. Файлы: "
@@ -42,7 +42,7 @@ SPEC = UtilitySpec(
                   filetypes=(("DBF", "*.dbf"),),
                   require_msg="Укажите DBF-файл или папку.", legacy_key="статистика_путь"),
         ParamSpec("day_kotd", "Коды отделений ДС:", ParamKind.TEXT,
-                  default="10,15", width=18,
+                  default="10,15,12", width=18,
                   hint="через запятую; остальные отделения — круглосуточный стационар",
                   legacy_key="дневной_стационар_коды"),
         ParamSpec("kotd_names", "Названия отделений:", ParamKind.TEXT, advanced=True,

@@ -19,6 +19,15 @@
 | **Удаление по протоколам** | Удаляет из DBF коды талонов, перечисленные в протоколах проверки `*.txt`, — из файла протокола и из общего файла талонов. |
 | **Удаление по списку кодов** | Удаляет записи с кодами талонов из простого текстового списка — из всех DBF папки, где есть поле кода. |
 | **Статистика стационара** | Строит отчёт по DBF стационара (дневной/круглосуточный → диагнозы МКБ → исходы) и сохраняет `.txt`, `.csv` (для Excel) и наглядный `.html`. |
+| **Экономика стационара** | Разбирает оплату по КСГ (`STOIM = БС × KOEF_Z × KOEF_UP × KOEF_PR`): доходность койки (₽ на койко-день), рейтинг «какая койка платит лучше», прерванные (недооплаченные) случаи и упущенная выручка, влияние исходов. Отдельно по дневному и круглосуточному стационару. Сохраняет `.txt` и `.html`. |
+
+## Скриншоты
+
+| Удаление по протоколам | Удаление по списку кодов |
+|:---:|:---:|
+| ![Удаление по протоколам](docs/screenshots/talons.png) | ![Удаление по списку кодов](docs/screenshots/codes.png) |
+| **Статистика стационара** | **Экономика стационара** |
+| ![Статистика стационара](docs/screenshots/stat.png) | ![Экономика стационара](docs/screenshots/economics.png) |
 
 Общие свойства обеих утилит удаления:
 
@@ -57,12 +66,14 @@ python -m omsreg
 ```bash
 omsreg remove-talons re_gb3 --dry-run
 omsreg remove-codes  re_gb3 коды.txt
-omsreg stat          uu/0091_016.dbf --day-kotd 10,15
+omsreg stat          uu/0091_016.dbf --day-kotd 10,15,12
+omsreg econ          uu/0091_016.dbf --day-kotd 10,15,12
 
 # отдельные команды (устанавливаются вместе с пакетом):
 omsreg-remove-talons ...
 omsreg-remove-codes  ...
 omsreg-stat          ...
+omsreg-econ          ...
 ```
 
 Подробнее по каждой — `omsreg <команда> --help`.
@@ -89,7 +100,7 @@ scripts\build-exe.bat
 ```
 src/omsreg/
   core/     общий код без tkinter: dbf, convert, errors, logging_setup, backup, textio
-  utils/    доменные утилиты (CLI + функции run_*): remove_error_talons, remove_codes, stat_stacionar
+  utils/    доменные утилиты (CLI + функции run_*): remove_error_talons, remove_codes, stat_stacionar, stat_economics
   gui/      платформа: spec, registry, theme, config, log_panel, app, plugins/
 tests/      тесты ядра и утилит (без дисплея)
 ```

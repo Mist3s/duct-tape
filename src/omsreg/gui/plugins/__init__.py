@@ -10,6 +10,6 @@ pkgutil.iter_modules в замороженном onefile-приложении н
 одним файлом. Для распространения через exe добавьте новый плагин и в BUILTIN.
 """
 
-from omsreg.gui.plugins import codes, stat, talons  # noqa: F401  (статический импорт для сборки)
+from omsreg.gui.plugins import codes, economics, stat, talons  # noqa: F401  (статический импорт для сборки)
 
-BUILTIN = (talons, codes, stat)
+BUILTIN = (talons, codes, stat, economics)

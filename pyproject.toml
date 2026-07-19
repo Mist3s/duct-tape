@@ -37,6 +37,7 @@ omsreg-gui = "omsreg.gui.app:main"
 omsreg-remove-talons = "omsreg.utils.remove_error_talons:main"
 omsreg-remove-codes = "omsreg.utils.remove_codes:main"
 omsreg-stat = "omsreg.utils.stat_stacionar:main"
+omsreg-econ = "omsreg.utils.stat_economics:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

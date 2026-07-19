@@ -5,6 +5,7 @@
     omsreg remove-talons ...   — удаление ошибочных талонов по протоколам
     omsreg remove-codes ...    — удаление по списку кодов из всех DBF
     omsreg stat ...            — статистика стационара
+    omsreg econ ...            — экономика и эффективность стационара
 
 Каждая подкоманда принимает те же аргументы, что и одноимённая CLI-утилита; за
 подробностями — `omsreg <подкоманда> --help`.
@@ -37,6 +38,8 @@ def main(argv: list[str] | None = None) -> None:
         from omsreg.utils.remove_codes import main as m
     elif cmd == "stat":
         from omsreg.utils.stat_stacionar import main as m
+    elif cmd == "econ":
+        from omsreg.utils.stat_economics import main as m
     else:
         print(f"Неизвестная подкоманда: {cmd}\n", file=sys.stderr)
         print(USAGE, file=sys.stderr)
