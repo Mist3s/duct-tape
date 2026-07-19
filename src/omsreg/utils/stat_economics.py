@@ -7,13 +7,16 @@
 самого файла. Все числа и коэффициенты берутся динамически из файла.
 
 Оплата идёт ЗА СЛУЧАЙ по группе КСГ (не за день) и равна:
-    базовая ставка × вес группы КСГ × уровень отделения × коэффициент оплаты.
+    базовая ставка × вес группы КСГ × поправочный коэффициент × коэффициент оплаты.
 Коэффициент оплаты: 1.0 — случай оплачен полностью, меньше 1 — оплата снижена
 (короткий случай, перевод, смерть/самовольный уход, длительность ниже норматива
 группы). «Недополучено» = полная сумма минус фактическая.
 
-В полях DBF это: STOIM (стоимость случая), KOEF_Z (вес КСГ), KOEF_UP (уровень),
-KOEF_PR (коэффициент оплаты), GRUPPA (код КСГ), FACT (койко-дни), ISHOD (исход).
+В полях DBF это: STOIM (стоимость случая), KOEF_Z (вес КСГ), KOEF_UP (поправочный
+коэффициент), KOEF_PR (коэффициент оплаты), GRUPPA (код КСГ), FACT (койко-дни),
+ISHOD (исход). Поправочный коэффициент задаётся по случаю; его точный смысл — в
+правилах КСГ и тарифном соглашении, из выгрузки не определяется (это НЕ «уровень
+отделения»: в одном отделении встречаются разные значения).
 Логика расчёта собрана в разделе «модель оплаты» ниже — правьте там при смене модели.
 
 Примеры запуска:
@@ -85,7 +88,7 @@ def ishod_word(code) -> str:
 # ----------------------------- модель оплаты (правьте здесь при смене логики) -----------------------------
 
 def base_rate(stoim, koef_z, koef_up, koef_pr):
-    """Базовая ставка = стоимость / (вес × уровень × коэффициент оплаты). None, если данных нет."""
+    """Базовая ставка = стоимость / (вес × поправочный коэф. × коэф. оплаты). None, если данных нет."""
     if not (stoim and koef_z and koef_up and koef_pr):
         return None
     return stoim / (koef_z * koef_up * koef_pr)
@@ -109,6 +112,28 @@ def ksg_prefix(gruppa: str) -> str:
     """Префикс кода КСГ: 'st' — круглосуточный, 'ds' — дневной стационар, иначе '?'."""
     g = (gruppa or "").strip().lower()
     return g[:2] if g[:2] in ("st", "ds") else "?"
+
+
+# Базовую ставку (БС) подписываем КОДОМ КСГ (st…/ds…), а НЕ «круглосуточный/дневной»:
+# по данным ставку определяет префикс кода группы, а тип стационара в отчёте считается по
+# отделению (KOTD) — эти классификации расходятся, поэтому слова здесь были бы неверны.
+PREFIX_LABEL = {"st": "st… (круглосуточные КСГ)", "ds": "ds… (дневные КСГ)"}
+
+
+def base_rates_by_type(cases):
+    """Медианная базовая ставка (БС) по префиксу кода КСГ: {'st': …, 'ds': …}."""
+    by = defaultdict(list)
+    for c in cases:
+        b = base_rate(c["stoim"], c["kz"], c["kup"], c["kpr"])
+        if b:
+            by[ksg_prefix(c["gruppa"])].append(b)
+    return {p: median(v) for p, v in by.items() if v}
+
+
+def koef_counts(cases, key, reverse=False):
+    """[(значение, число случаев)] для коэффициента key ('kup'/'kpr'), по возрастанию значения."""
+    c = Counter(x[key] for x in cases if x[key] is not None)
+    return sorted(c.items(), reverse=reverse)
 
 
 # ----------------------------- сбор данных -----------------------------
@@ -223,12 +248,20 @@ def ksg_rows(cases):
                  and c["fact"] is not None and c["fact"] <= 3]
         s = sum(c["stoim"] for c in cs)
         chapters = Counter(mkb_chapter(c["kmkb"]) for c in cs if mkb_chapter(c["kmkb"]))
+        # вес КСГ (KOEF_Z) и поправочный коэф. (KOEF_UP) — в норме по одному на группу;
+        # тариф полного случая = БС × вес × поправочный коэф.
+        kzs = sorted({round(c["kz"], 4) for c in cs if c["kz"] is not None})
+        kups = sorted({round(c["kup"], 4) for c in cs if c["kup"] is not None})
+        fts = [full_payment(c["stoim"], c["kpr"]) for c in cs if c["stoim"] and c["kpr"]]
         rows.append({
             "g": g, "type": Counter(c["type"] for c in cs).most_common(1)[0][0],
-            "n": len(cs), "sum": s, "avg": s / len(cs),
+            "n": len(cs), "sum": s,
             "per_day": _per_day(s, cs),
-            # «идеальный» койко-день: максимум стоимость÷дни среди полностью оплаченных случаев
-            "ideal_per_day": max((c["stoim"] / c["fact"] for c in full if c["fact"]), default=None),
+            "kz": kzs[0] if len(kzs) == 1 else None,   # None, если у группы разные веса (диапазон)
+            "kz_range": (kzs[0], kzs[-1]) if kzs else None,
+            "kup": kups[0] if len(kups) == 1 else None,
+            "kup_range": (kups[0], kups[-1]) if kups else None,
+            "full_tariff": median(fts) if fts else None,  # оплата за полностью пролеченный случай
             # минимальная длительность, при которой встречалась ПОЛНАЯ оплата (None — полных нет)
             "min_full_day": min((c["fact"] for c in full if c["fact"] is not None), default=None),
             "has_full": bool(full),
@@ -244,6 +277,15 @@ def ksg_rows(cases):
 def dx_examples(dx: Counter, limit: int = 3) -> str:
     """Примеры диагнозов из файла: 'J18.9×25, J45.8×9, J15.8×7'."""
     return ", ".join(f"{code}×{cnt}" for code, cnt in dx.most_common(limit))
+
+
+def coef_str(value, rng) -> str:
+    """Коэффициент строкой: одно значение, диапазон (если в группе разные) или «—»."""
+    if value is not None:
+        return f"{value:g}"
+    if rng:
+        return f"{rng[0]:g}–{rng[1]:g}"
+    return "—"
 
 
 def ishod_rows(cases):
@@ -292,6 +334,7 @@ def build_report(dbf_path, cases, deleted, day_kotd, avail, names=None):
     has_kpr = avail["koef_pr"] is not None
     has_fact = avail["fact"] is not None
     has_g = avail["gruppa"] is not None
+    has_full_model = has_g and all(avail[k] for k in ("koef_z", "koef_up", "koef_pr"))
 
     def m(x):
         return money(x) if x is not None else "—"
@@ -401,44 +444,95 @@ def build_report(dbf_path, cases, deleted, day_kotd, avail, names=None):
                 w(f"    {'ИТОГО':<12}{'':>8}{sum(k['short_n'] for k in short_g):>8}{'':>8}"
                   f"{money(sum(k['short_lost'] for k in short_g)):>14}")
 
-    # ---------- как исход влияет на оплату ----------
+    # ---------- как исход влияет на оплату (по типам стационара и отделениям) ----------
     if has_kpr and avail["ishod"]:
         w("")
-        w("КАК ИСХОД ВЛИЯЕТ НА ОПЛАТУ")
+        w("КАК ИСХОД ВЛИЯЕТ НА ОПЛАТУ (по типам стационара и отделениям)")
         w("  У каких исходов чаще снижается оплата (по данным файла; точные правила — в КСГ).")
-        w(f"  {'исход':<38}{'случаев':>8}{'полных':>9}{'сниженных':>11}{'недополуч.':>14}")
-        for r in ishod_rows(cases):
-            w(f"  {ishod_word(r['ishod']):<38}{r['n']:>8}{r['full']:>9}{r['reduced']:>11}"
-              f"{money(r['under']):>14}")
+
+        def ishod_block(subset, indent):
+            w(f"{indent}{'исход':<36}{'случаев':>8}{'полных':>9}{'сниженных':>11}{'недополуч.':>14}")
+            for r in ishod_rows(subset):
+                w(f"{indent}{ishod_word(r['ishod']):<36}{r['n']:>8}{r['full']:>9}{r['reduced']:>11}"
+                  f"{money(r['under']):>14}")
+
+        for st in (ROUND_TYPE, DAY_TYPE):
+            st_cases = [c for c in cases if c["type"] == st]
+            if not st_cases:
+                continue
+            by_k = defaultdict(list)
+            for c in st_cases:
+                by_k[c["kotd"]].append(c)
+            w("")
+            w(f"  {st}:")
+            ishod_block(st_cases, "    ")
+            if len(by_k) > 1:   # если отделение одно, таблица типа = таблице отделения — не дублируем
+                for kotd in sorted(by_k, key=lambda k: (k is None, str(k))):
+                    w("")
+                    w(f"    отделение {kotd_name(kotd, names)}:")
+                    ishod_block(by_k[kotd], "      ")
+
+    # ---------- как формируется оплата случая (расшифровка формулы) ----------
+    if has_full_model:
+        bs = base_rates_by_type(cases)
+        bs_parts = [f"{PREFIX_LABEL.get(p, p)} ~{money(v)} ₽"
+                    for p, v in sorted(bs.items(), key=lambda kv: -kv[1])]
+        kz_all = [k["kz_range"] for k in krows if k["kz_range"]]
+        up_str = ", ".join(f"×{v:g} — {c}" for v, c in koef_counts(cases, "kup"))
+        pr_str = ", ".join(f"×{v:g} — {c}" for v, c in koef_counts(cases, "kpr", reverse=True))
+        w("")
+        w("КАК ФОРМИРУЕТСЯ ОПЛАТА СЛУЧАЯ")
+        w("  Оплата идёт за случай целиком (не за день) и равна произведению четырёх множителей:")
+        w("")
+        w("    оплата = базовая ставка × вес группы КСГ × поправочный коэффициент × коэффициент оплаты")
+        w("")
+        if bs_parts:
+            w("  • Базовая ставка — единая стоимость случая для типа КСГ, восстановлена из данных:")
+            w("    " + "; ".join(bs_parts) + ".")
+            w("    (Тип КСГ по коду st…/ds… — не то же, что тип стационара по отделению в других разделах.)")
+        if kz_all:
+            lo = min(r[0] for r in kz_all)
+            hi = max(r[1] for r in kz_all)
+            w("  • Вес группы КСГ (столбец «вес КСГ») — во сколько раз группа дороже базовой ставки;")
+            w(f"    постоянен внутри группы, в файле {lo:g}–{hi:g}.")
+        w("  • Поправочный коэффициент (столбец «попр.коэф.») — задаётся по случаю. Значения в файле")
+        w("    (случаев): " + up_str + ".")
+        w("    Это не «уровень отделения» (в одном отделении бывают разные значения); точный смысл —")
+        w("    в правилах КСГ и тарифном соглашении, из выгрузки не определяется. В этом файле он")
+        w("    постоянен внутри каждой группы КСГ, поэтому показан в таблице отдельным столбцом.")
+        w("  • Коэффициент оплаты — полнота случая: чем меньше, тем сильнее снижена оплата.")
+        w("    Значения в файле (случаев): " + pr_str + ".")
+        w("    Разбор недополученных сумм — в разделе «Где недополучено».")
 
     # ---------- КСГ: что за группы ----------
     if has_g:
         w("")
         w("КСГ: ЧТО ЭТО ЗА ГРУППЫ И СКОЛЬКО ПРИНОСЯТ (по типам стационара, топ по обороту)")
         w("  Группа поясняется реальными диагнозами (коды МКБ) и главой МКБ из этого файла.")
-        w("  «ср.случай» = оплачено ÷ число случаев; «мин.полн.день» = минимальная длительность,")
-        w("  при которой встречалась полная оплата; «макс.₽/к-день» = наибольшая оплата койко-дня")
-        w("  среди полностью оплаченных случаев. «—» — полных случаев в группе нет.")
+        w("  «вес КСГ» и «попр.коэф.» — множители группы (см. блок выше); «тариф полн.» = оплата за")
+        w("  полностью пролеченный случай (базовая ставка × вес × попр.коэф.); «мин.полн.день» =")
+        w("  минимальная длительность, при которой была полная оплата («—» — полных случаев нет).")
         for st in (ROUND_TYPE, DAY_TYPE):
             st_ksg = sorted([k for k in krows if k["type"] == st], key=lambda k: -k["sum"])[:12]
             if not st_ksg:
                 continue
             w("")
             w(f"  {st}:")
-            w(f"    {'КСГ':<12}{'случаев':>8}{'ср.случай':>12}{'мин.полн.день':>15}"
-              f"{'макс.₽/к-день':>15}  диагнозы (МКБ) — глава")
+            w(f"    {'КСГ':<12}{'случаев':>8}{'вес КСГ':>9}{'попр.коэф.':>11}{'тариф полн.':>14}"
+              f"{'мин.полн.день':>14}  диагнозы (МКБ) — глава")
             for k in st_ksg:
                 tail = f" — {k['chapter']}" if k["chapter"] else ""
                 mfd = f"{k['min_full_day']:.0f}" if k["min_full_day"] is not None else "—"
-                w(f"    {k['g']:<12}{k['n']:>8}{money(k['avg']):>12}{mfd:>15}"
-                  f"{m(k['ideal_per_day']):>15}  {dx_examples(k['dx'])}{tail}")
+                w(f"    {k['g']:<12}{k['n']:>8}{coef_str(k['kz'], k['kz_range']):>9}"
+                  f"{coef_str(k['kup'], k['kup_range']):>11}{m(k['full_tariff']):>14}"
+                  f"{mfd:>14}  {dx_examples(k['dx'], 2)}{tail}")
 
     # ---------- методика ----------
     w("")
     w("=" * 104)
     w("МЕТОДИКА")
     w("  • Оплата идёт за случай по группе КСГ, а не за день: сумма зависит от веса группы КСГ,")
-    w("    уровня отделения и коэффициента оплаты (полноты пролеченного случая).")
+    w("    поправочного коэффициента и коэффициента оплаты (полноты пролеченного случая).")
     if has_kpr:
         w("  • Коэффициент оплаты: 1.0 = случай оплачен полностью; меньше 1 = снижена (короткий случай,")
         w("    перевод, смерть, самовольный уход, длительность ниже нормы группы). Значения в файле:")
@@ -455,17 +549,9 @@ def build_report(dbf_path, cases, deleted, day_kotd, avail, names=None):
     if day_depts:
         w(f"  • Дневной/круглосуточный — по отделениям (KOTD): дневные — {', '.join(day_depts)}; "
           "остальные — круглосуточные.")
-    if all(avail[k] for k in ("koef_z", "koef_up", "koef_pr", "gruppa")):
-        by_pref = defaultdict(list)
-        for c in cases:
-            b = base_rate(c["stoim"], c["kz"], c["kup"], c["kpr"])
-            if b:
-                by_pref[ksg_prefix(c["gruppa"])].append(b)
-        pr = []
-        if by_pref.get("st"):
-            pr.append(f"КСГ st… ~{money(median(by_pref['st']))} ₽")
-        if by_pref.get("ds"):
-            pr.append(f"КСГ ds… ~{money(median(by_pref['ds']))} ₽")
+    if has_full_model:
+        bs = base_rates_by_type(cases)
+        pr = [f"КСГ {p}… ~{money(bs[p])} ₽" for p in ("st", "ds") if p in bs]
         if pr:
             w("  • Базовая ставка (восстановлена из данных): " + "; ".join(pr) + ".")
     w(f"  Источник данных: {dbf_path}.")
@@ -509,6 +595,7 @@ def build_html(dbf_path, cases, deleted, avail, names=None) -> str:
     has_kpr = avail["koef_pr"] is not None
     has_fact = avail["fact"] is not None
     has_g = avail["gruppa"] is not None
+    has_full_model = has_g and all(avail[k] for k in ("koef_z", "koef_up", "koef_pr"))
     parts = []
     p = parts.append
 
@@ -628,47 +715,97 @@ def build_html(dbf_path, cases, deleted, avail, names=None) -> str:
                   f'<td></td><td class="num bad">{money(sum(k["short_lost"] for k in short_g))}</td>'
                   f'<td></td></tr></tbody></table>')
 
-    # ---------- как исход влияет на оплату ----------
+    # ---------- как исход влияет на оплату (по типам стационара и отделениям) ----------
     if has_kpr and avail["ishod"]:
+        def ishod_table_html(subset):
+            p('<table><thead><tr><th>исход</th><th class="num">случаев</th><th class="num">полных</th>'
+              '<th class="num">сниженных</th><th class="num">недополуч.</th></tr></thead><tbody>')
+            for r in ishod_rows(subset):
+                under = money(r["under"]) if r["under"] else ""
+                p(f'<tr><td>{e(ishod_word(r["ishod"]))}</td><td class="num">{r["n"]}</td>'
+                  f'<td class="num good">{r["full"]}</td><td class="num">{r["reduced"]}</td>'
+                  f'<td class="num bad">{under}</td></tr>')
+            p('</tbody></table>')
+
         p('<h2>Как исход влияет на оплату</h2>'
-          '<p class="note">У каких исходов чаще снижается оплата (по данным файла; точные правила — в КСГ).</p>'
-          '<table><thead><tr><th>исход</th><th class="num">случаев</th><th class="num">полных</th>'
-          '<th class="num">сниженных</th><th class="num">недополуч.</th></tr></thead><tbody>')
-        for r in ishod_rows(cases):
-            under = money(r["under"]) if r["under"] else ""
-            p(f'<tr><td>{e(ishod_word(r["ishod"]))}</td><td class="num">{r["n"]}</td>'
-              f'<td class="num good">{r["full"]}</td><td class="num">{r["reduced"]}</td>'
-              f'<td class="num bad">{under}</td></tr>')
+          '<p class="note">По типам стационара и отделениям. У каких исходов чаще снижается оплата '
+          '(по данным файла; точные правила — в КСГ).</p>')
+        for st in (ROUND_TYPE, DAY_TYPE):
+            st_cases = [c for c in cases if c["type"] == st]
+            if not st_cases:
+                continue
+            by_k = defaultdict(list)
+            for c in st_cases:
+                by_k[c["kotd"]].append(c)
+            p(f'<h3 style="font-size:15px;margin:12px 0 4px">{e(st)}</h3>')
+            ishod_table_html(st_cases)
+            if len(by_k) > 1:   # одно отделение — таблица типа совпадает с отделением, не дублируем
+                for kotd in sorted(by_k, key=lambda k: (k is None, str(k))):
+                    p('<h4 style="font-size:13.5px;margin:8px 0 2px;color:var(--ink2)">'
+                      f'отделение {e(kotd_name(kotd, names))}</h4>')
+                    ishod_table_html(by_k[kotd])
+
+    # ---------- как формируется оплата случая ----------
+    if has_full_model:
+        bs = base_rates_by_type(cases)
+        bs_parts = [f'{e(PREFIX_LABEL.get(pf, pf))} ~{money(v)} ₽'
+                    for pf, v in sorted(bs.items(), key=lambda kv: -kv[1])]
+        kz_all = [k["kz_range"] for k in krows if k["kz_range"]]
+        kzr = (f'{min(r[0] for r in kz_all):g}–{max(r[1] for r in kz_all):g}' if kz_all else '—')
+        up_str = ", ".join(f"×{v:g} — {c}" for v, c in koef_counts(cases, "kup"))
+        pr_str = ", ".join(f"×{v:g} — {c}" for v, c in koef_counts(cases, "kpr", reverse=True))
+        p('<h2>Как формируется оплата случая</h2>')
+        p('<p style="font-size:15px;margin:6px 0"><b>оплата = базовая ставка × вес группы КСГ × '
+          'поправочный коэффициент × коэффициент оплаты</b></p>')
+        p('<table><thead><tr><th>множитель</th><th>что показывает</th><th>постоянен</th>'
+          '<th>значения в файле</th></tr></thead><tbody>')
+        p(f'<tr><td><b>Базовая ставка</b></td><td>единая стоимость случая, восстановлена из данных; '
+          f'подписывается кодом КСГ (st…/ds…), а не «круглосуточный/дневной»</td>'
+          f'<td>тип КСГ (код st…/ds…)</td><td>{"; ".join(bs_parts) or "—"}</td></tr>')
+        p(f'<tr><td><b>Вес группы КСГ</b> (столбец «вес КСГ»)</td>'
+          f'<td>во сколько раз группа дороже базовой ставки</td><td>группа КСГ</td>'
+          f'<td>{e(kzr)}</td></tr>')
+        p(f'<tr><td><b>Поправочный коэффициент</b> (столбец «попр. коэф.»)</td>'
+          f'<td>корректирует стоимость; это <b>не «уровень отделения»</b> — точный смысл в правилах '
+          f'КСГ / тарифном соглашении, из данных не определяется</td>'
+          f'<td>по случаю (в этом файле — один на группу КСГ)</td>'
+          f'<td>{e(up_str)}</td></tr>')
+        p(f'<tr><td><b>Коэффициент оплаты</b></td>'
+          f'<td>полнота случая: 1.0 — оплачен полностью, меньше 1 — снижена (см. «Где недополучено»)</td>'
+          f'<td>по случаю</td><td>{e(pr_str)}</td></tr>')
         p('</tbody></table>')
+        p('<p class="note"><b>Тариф полн. случая</b> в таблице ниже = базовая ставка × вес × '
+          'поправочный коэффициент — оплата за полностью пролеченный случай.</p>')
 
     # ---------- КСГ (по типам стационара) ----------
     if has_g:
         p('<h2>КСГ: что это за группы и сколько приносят</h2>'
           '<p class="note">По типам стационара, топ по обороту. Группа поясняется реальными диагнозами '
-          '(МКБ) и главой МКБ из этого файла. «ср. случай» = оплачено ÷ число случаев; '
-          '«мин. полный день» = минимальная длительность, при которой встречалась полная оплата; '
-          '«макс. ₽/койко-день» = наибольшая оплата койко-дня среди полностью оплаченных случаев. '
-          '«—» — полных случаев в группе нет.</p>')
+          '(МКБ) и главой МКБ из этого файла. «вес КСГ» и «попр. коэф.» — множители группы (см. блок '
+          'выше); «тариф полн. случая» = оплата за полностью пролеченный случай; «мин. полный день» = '
+          'минимальная длительность, при которой была полная оплата. «—» — полных случаев в группе нет.</p>')
         for st in (ROUND_TYPE, DAY_TYPE):
             st_ksg = sorted([k for k in krows if k["type"] == st], key=lambda k: -k["sum"])[:12]
             if not st_ksg:
                 continue
             p(f'<h3 style="font-size:15px;margin:10px 0 4px">{e(st)}</h3>'
               '<table><thead><tr><th>КСГ</th><th>глава МКБ</th><th class="num">случаев</th>'
-              '<th class="num">ср. случай</th><th class="num">мин. полный день</th>'
-              '<th class="num">макс. ₽/койко-день</th><th>диагнозы (примеры)</th></tr></thead><tbody>')
+              '<th class="num">вес КСГ</th><th class="num">попр. коэф.</th>'
+              '<th class="num">тариф полн. случая, ₽</th><th class="num">мин. полный день</th>'
+              '<th>диагнозы (примеры)</th></tr></thead><tbody>')
             for k in st_ksg:
                 mfd = f"{k['min_full_day']:.0f}" if k["min_full_day"] is not None else "—"
                 p(f'<tr><td><b>{e(k["g"])}</b></td><td>{e(k["chapter"])}</td>'
-                  f'<td class="num">{k["n"]}</td><td class="num">{money(k["avg"])}</td>'
-                  f'<td class="num">{mfd}</td><td class="num">{m(k["ideal_per_day"])}</td>'
+                  f'<td class="num">{k["n"]}</td><td class="num">{e(coef_str(k["kz"], k["kz_range"]))}</td>'
+                  f'<td class="num">{e(coef_str(k["kup"], k["kup_range"]))}</td>'
+                  f'<td class="num">{m(k["full_tariff"])}</td><td class="num">{mfd}</td>'
                   f'<td class="dx">{e(dx_examples(k["dx"]))}</td></tr>')
             p('</tbody></table>')
 
     # ---------- методика ----------
     p('<h2>Методика</h2><ul class="note main-list">')
     p('<li>Оплата идёт за случай по группе КСГ, а не за день: сумма зависит от веса группы КСГ, '
-      'уровня отделения и коэффициента оплаты (полноты пролеченного случая).</li>')
+      'поправочного коэффициента и коэффициента оплаты (полноты пролеченного случая).</li>')
     if has_kpr:
         items = []
         for kpr in kpr_values(cases):

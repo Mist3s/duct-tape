@@ -38,8 +38,31 @@ def test_economics_report(make_dbf, tmp_path):
     assert "КСГ:" in txt                               # расшифровка КСГ примерами диагнозов
     assert "21 000" in txt                             # упущенная выручка
     assert "27 — Терапевтическое" in txt               # название отделения из KOTD_NAMES
+    assert "КАК ФОРМИРУЕТСЯ ОПЛАТА СЛУЧАЯ" in txt       # расшифровка формулы оплаты
+    assert "вес КСГ" in txt and "тариф полн" in txt     # базовая стоимость и вес в блоке КСГ
+    assert "попр.коэф." in txt                          # поправочный коэффициент отдельным столбцом
+    assert "st… (круглосуточные КСГ)" in txt            # базовая ставка подписана кодом КСГ, не «дневной»
+    assert "не «уровень отделения»" in txt              # честная трактовка KOEF_UP
+    assert "уровня отделения" not in txt                # прежняя ложная формулировка убрана
     assert res["html_path"].exists()
-    assert "Экономика" in res["html_path"].read_text(encoding="utf-8")
+    html = res["html_path"].read_text(encoding="utf-8")
+    assert "Экономика" in html
+    assert "Как формируется оплата случая" in html
+    assert "попр. коэф." in html
+
+
+def test_base_rate_and_koef_helpers():
+    # базовая ставка восстанавливается по префиксу кода КСГ (st…/ds…), а не по отделению
+    from omsreg.utils.stat_economics import base_rates_by_type, koef_counts
+    cases = [
+        {"stoim": 30000.0, "kz": 0.9, "kup": 1.0, "kpr": 1.0, "gruppa": "st27.005"},
+        {"stoim": 9000.0, "kz": 0.9, "kup": 1.0, "kpr": 0.3, "gruppa": "st27.005"},
+        {"stoim": 15000.0, "kz": 0.7, "kup": 0.9, "kpr": 1.0, "gruppa": "ds15.001"},
+    ]
+    bs = base_rates_by_type(cases)
+    assert round(bs["st"], 2) == 33333.33
+    assert round(bs["ds"], 2) == 23809.52
+    assert koef_counts(cases, "kpr", reverse=True) == [(1.0, 2), (0.3, 1)]
 
 
 def test_economics_without_coefficients(make_dbf, tmp_path):
