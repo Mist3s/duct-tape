@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from omsreg.gui.spec import ActionSpec, JobResult, ParamKind, ParamSpec, RunContext, UtilitySpec
 from omsreg.utils import stat_stacionar as stat
+from omsreg.utils._shared import stat_common as common
 
 _DF = stat.DEFAULT_FIELDS  # {"kotd": "KOTD", ...}
 
@@ -12,7 +13,7 @@ def _run(ctx: RunContext) -> JobResult:
     p = ctx.params
     fields = {"kotd": p["field_kotd"], "kmkb": p["field_kmkb"], "stoim": p["field_stoim"],
               "ishod": p["field_ishod"], "fact": p["field_fact"]}
-    kotd_names = stat.parse_kotd_names(p.get("kotd_names", ""))
+    kotd_names = common.parse_kotd_names(p.get("kotd_names", ""))
     res = stat.run_stat(p["target"], p["day_kotd"] or "10,15,12", fields, kotd_names,
                         extra_handlers=[ctx.log_handler], console=False)
     return JobResult(
@@ -46,7 +47,7 @@ SPEC = UtilitySpec(
                   hint="через запятую; остальные отделения — круглосуточный стационар",
                   legacy_key="дневной_стационар_коды"),
         ParamSpec("kotd_names", "Названия отделений:", ParamKind.TEXT, advanced=True,
-                  default=stat.format_kotd_names(stat.KOTD_NAMES),
+                  default=common.format_kotd_names(common.KOTD_NAMES),
                   hint="формат: 23=Пульмонологическое; 27=Терапевтическое; 61=Неврологическое",
                   legacy_key="названия_отделений"),
         _field("field_kotd", "Отделение (KOTD):", "kotd", "поле_отделение"),

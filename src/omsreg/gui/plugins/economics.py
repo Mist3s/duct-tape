@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from omsreg.core import money
 from omsreg.gui.spec import ActionSpec, JobResult, ParamKind, ParamSpec, RunContext, UtilitySpec
 from omsreg.utils import stat_economics as econ
-from omsreg.utils import stat_stacionar as stat
+from omsreg.utils._shared import stat_common as common
 
 _EF = econ.ECON_FIELDS
 
@@ -12,12 +13,12 @@ _EF = econ.ECON_FIELDS
 def _run(ctx: RunContext) -> JobResult:
     p = ctx.params
     fields = {k: p[f"field_{k}"] for k in _EF if f"field_{k}" in p}
-    kotd_names = stat.parse_kotd_names(p.get("kotd_names", ""))
+    kotd_names = common.parse_kotd_names(p.get("kotd_names", ""))
     res = econ.run_economics(p["target"], p["day_kotd"] or "10,15,12", fields, kotd_names,
                              extra_handlers=[ctx.log_handler], console=False)
     return JobResult(
-        summary=(f"Готово. Случаев: {res['cases']}, оплачено {stat.money(res['total'])} ₽, "
-                 f"недополучено {stat.money(res['underpaid'])} ₽.\n"
+        summary=(f"Готово. Случаев: {res['cases']}, оплачено {money(res['total'])} ₽, "
+                 f"недополучено {money(res['underpaid'])} ₽.\n"
                  f"Файлы: {res['txt_path'].name}, {res['html_path'].name}"),
         log_text=res["text"],
         open_path=res["html_path"],
@@ -46,7 +47,7 @@ SPEC = UtilitySpec(
                   hint="через запятую; остальные отделения — круглосуточный стационар",
                   legacy_key="дневной_стационар_коды"),
         ParamSpec("kotd_names", "Названия отделений:", ParamKind.TEXT, advanced=True,
-                  default=stat.format_kotd_names(stat.KOTD_NAMES),
+                  default=common.format_kotd_names(common.KOTD_NAMES),
                   hint="формат: 23=Пульмонологическое; 27=Терапевтическое; 61=Неврологическое",
                   legacy_key="названия_отделений"),
         _fld("stoim", "Стоимость (STOIM):"),

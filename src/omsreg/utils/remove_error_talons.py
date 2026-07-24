@@ -32,7 +32,15 @@ from pathlib import Path
 
 from omsreg.core import TALON_FIELD_DEFAULT, DbfTable, JobError, as_code, setup_job_logging
 from omsreg.core.backup import save_and_verify
+from omsreg.core.cli import run_or_exit
 from omsreg.core.textio import detect_and_read_text
+from omsreg.utils._shared.removal_common import (
+    add_dry_run_arg,
+    add_field_arg,
+    join_fio,
+    log_summary_table,
+    warn_large_deletion,
+)
 
 RE_DBF_NAME = re.compile(r"Обработан\s+файл\s*:\s*([\w.\-]+\.dbf)", re.IGNORECASE)
 RE_TALON = re.compile(r"код\s+талона\s*[:№]?\s*(\d+)", re.IGNORECASE)
@@ -175,10 +183,7 @@ def process_dbf(dbf_path: Path, codes_with_sources: dict, field_name: str,
             continue
         if code in codes_with_sources:
             per_code_hits[code] += 1
-            fio = ""
-            if f_surname or f_name:
-                parts = [table.value(rec, f) for f in (f_surname, f_name) if f]
-                fio = " ".join(p for p in parts if p)
+            fio = join_fio(table, rec, f_surname, f_name)
             src = ", ".join(sorted(codes_with_sources[code]))
             log.info("  УДАЛЯЕТСЯ запись №%d: %s=%s%s (источник: %s)",
                      i, fld.name, code, f", ФИО: {fio}" if fio else "", src)
@@ -205,7 +210,7 @@ def process_dbf(dbf_path: Path, codes_with_sources: dict, field_name: str,
     if not_found:
         log.info("    коды, НЕ найденные в этом файле (%d): %s",
                  len(not_found), ", ".join(str(c) for c in not_found))
-    _warn_large_deletion(dbf_path, len(deleted), table.nrec)
+    warn_large_deletion(dbf_path, len(deleted), table.nrec, log, "протоколы и поле кода талона")
 
     result = {"path": dbf_path, "before": table.nrec, "deleted": len(deleted),
               "after": len(kept), "found": found, "not_found": not_found, "error": False}
@@ -223,16 +228,6 @@ def process_dbf(dbf_path: Path, codes_with_sources: dict, field_name: str,
     )
     result["error"] = not verify["ok"]
     return result
-
-
-def _warn_large_deletion(dbf_path: Path, deleted: int, total: int) -> None:
-    """Предохранитель: заметное предупреждение, если удаляется большая доля файла —
-    типичный признак неверного поля/файла кодов."""
-    if total and (deleted == total or deleted / total > 0.30):
-        share = deleted / total * 100
-        log.warning("  ВНИМАНИЕ: из %s удаляется %d из %d записей (%.0f%%) — "
-                    "убедитесь, что указаны правильные протоколы и поле кода талона!",
-                    dbf_path.name, deleted, total, share)
 
 
 # ----------------------------- основная логика -----------------------------
@@ -355,11 +350,7 @@ def run_removal(directory, common=None, field=TALON_FIELD_DEFAULT, dry_run=False
     # -------- итоговая сводка --------
     log.info("=" * 78)
     log.info("ИТОГОВАЯ СВОДКА%s", " (режим проверки, файлы не изменялись)" if dry_run else "")
-    w = max(len(r["path"].name) for r in results)
-    log.info("  %-*s  %10s  %10s  %10s", w, "файл", "было", "удалено", "стало")
-    for r in results:
-        mark = "  <-- ОШИБКА, файл не изменён корректно" if r["error"] else ""
-        log.info("  %-*s  %10d  %10d  %10d%s", w, r["path"].name, r["before"], r["deleted"], r["after"], mark)
+    log_summary_table(results, log)
 
     log.info("-" * 78)
     log.info("Сводка по кодам (найден/не найден в каждом файле из плана):")
@@ -394,18 +385,11 @@ def main() -> None:
     parser.add_argument("directory", help="папка с протоколами *.txt и DBF-файлами (например re_gb3)")
     parser.add_argument("--common", default=None,
                         help="имя общего файла талонов (по умолчанию ищется: 6_XXXXXXXt.dbf)")
-    parser.add_argument("--field", default=TALON_FIELD_DEFAULT,
-                        help=f"имя поля с кодом талона (по умолчанию {TALON_FIELD_DEFAULT})")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="только показать, что будет удалено, ничего не изменяя")
+    add_field_arg(parser)
+    add_dry_run_arg(parser)
     args = parser.parse_args()
-    try:
-        res = run_removal(Path(args.directory), args.common, args.field, args.dry_run)
-    except JobError as e:
-        if not log.handlers:
-            print(f"ОШИБКА: {e}", file=sys.stderr)
-        sys.exit(1)
-    sys.exit(2 if res["had_error"] else 0)
+    res = run_or_exit(lambda: run_removal(Path(args.directory), args.common, args.field, args.dry_run), log)
+    sys.exit(1 if res["had_error"] else 0)
 
 
 if __name__ == "__main__":

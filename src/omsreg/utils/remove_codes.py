@@ -29,7 +29,15 @@ from pathlib import Path
 
 from omsreg.core import TALON_FIELD_DEFAULT, DbfTable, JobError, setup_job_logging
 from omsreg.core.backup import save_and_verify
+from omsreg.core.cli import run_or_exit
 from omsreg.core.textio import extract_code_tokens, read_codes_file
+from omsreg.utils._shared.removal_common import (
+    add_dry_run_arg,
+    add_field_arg,
+    join_fio,
+    log_summary_table,
+    warn_large_deletion,
+)
 
 MIN_CODE_LEN = 6   # числа короче не считаем кодами (даты, телефоны, нумерация строк)
 MAX_CODE_LEN = 12  # числа длиннее не считаем кодами (например, 16-значный полис)
@@ -64,10 +72,7 @@ def process_dbf(dbf_path: Path, codes: set, field_name: str,
         code = table.code_value(rec, fld)
         if code is not None and code in codes:
             found[code] = found.get(code, 0) + 1
-            fio = ""
-            if f_surname or f_name:
-                parts = [table.value(rec, f) for f in (f_surname, f_name) if f]
-                fio = " ".join(p for p in parts if p)
+            fio = join_fio(table, rec, f_surname, f_name)
             log.info("  УДАЛЯЕТСЯ запись №%d: %s=%s%s",
                      i, fld.name, code, f", ФИО: {fio}" if fio else "")
             deleted.append(rec)
@@ -76,7 +81,7 @@ def process_dbf(dbf_path: Path, codes: set, field_name: str,
 
     log.info("  Итог по файлу %s: было %d, подлежит удалению %d (кодов найдено: %d), останется %d",
              dbf_path.name, table.nrec, len(deleted), len(found), len(kept))
-    _warn_large_deletion(dbf_path, len(deleted), table.nrec)
+    warn_large_deletion(dbf_path, len(deleted), table.nrec, log, "файл кодов и поле кода талона")
 
     result = {"path": dbf_path, "before": table.nrec, "deleted": len(deleted),
               "after": len(kept), "found": found, "skipped": False, "error": False}
@@ -93,15 +98,6 @@ def process_dbf(dbf_path: Path, codes: set, field_name: str,
     )
     result["error"] = not verify["ok"]
     return result
-
-
-def _warn_large_deletion(dbf_path: Path, deleted: int, total: int) -> None:
-    """Предохранитель против неверного файла кодов/поля: заметное предупреждение при
-    удалении большой доли записей."""
-    if total and (deleted == total or deleted / total > 0.30):
-        log.warning("  ВНИМАНИЕ: из %s удаляется %d из %d записей (%.0f%%) — "
-                    "убедитесь, что указаны правильные файл кодов и поле кода талона!",
-                    dbf_path.name, deleted, total, deleted / total * 100)
 
 
 # ----------------------------- основная логика -----------------------------
@@ -205,17 +201,12 @@ def run_codes(directory, codes_file=None, field=TALON_FIELD_DEFAULT, dry_run=Fal
     # -------- итоговая сводка --------
     log.info("=" * 78)
     log.info("ИТОГОВАЯ СВОДКА%s", " (режим проверки, файлы не изменялись)" if dry_run else "")
-    w = max(len(r["path"].name) for r in results)
-    log.info("  %-*s  %10s  %10s  %10s", w, "файл", "было", "удалено", "стало")
-    for r in results:
+    def _note(r):
         if r["skipped"]:
-            note = f"  (нет поля {field} — пропущен)"
-        elif r["error"]:
-            note = "  <-- ОШИБКА, файл не изменён корректно"
-        else:
-            note = ""
-        log.info("  %-*s  %10d  %10d  %10d%s",
-                 w, r["path"].name, r["before"], r["deleted"], r["after"], note)
+            return f"  (нет поля {field} — пропущен)"
+        return "  <-- ОШИБКА, файл не изменён корректно" if r["error"] else ""
+
+    log_summary_table(results, log, _note)
 
     log.info("-" * 78)
     log.info("Сводка по кодам:")
@@ -257,23 +248,16 @@ def main() -> None:
         description="Удаление записей с заданными кодами талонов из ВСЕХ DBF-файлов папки.")
     parser.add_argument("directory", help="папка с DBF-файлами")
     parser.add_argument("codes_file", help="текстовый файл со списком кодов талонов")
-    parser.add_argument("--field", default=TALON_FIELD_DEFAULT,
-                        help=f"имя поля с кодом талона (по умолчанию {TALON_FIELD_DEFAULT})")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="только показать, что будет удалено, ничего не изменяя")
+    add_field_arg(parser)
+    add_dry_run_arg(parser)
     parser.add_argument("--min-len", type=int, default=MIN_CODE_LEN,
                         help=f"минимальная длина кода в цифрах (по умолчанию {MIN_CODE_LEN})")
     parser.add_argument("--max-len", type=int, default=MAX_CODE_LEN,
                         help=f"максимальная длина кода в цифрах (по умолчанию {MAX_CODE_LEN})")
     args = parser.parse_args()
-    try:
-        res = run_codes(Path(args.directory), args.codes_file, args.field, args.dry_run,
-                        args.min_len, args.max_len)
-    except JobError as e:
-        if not log.handlers:
-            print(f"ОШИБКА: {e}", file=sys.stderr)
-        sys.exit(1)
-    sys.exit(2 if res["had_error"] else 0)
+    res = run_or_exit(lambda: run_codes(Path(args.directory), args.codes_file, args.field,
+                                        args.dry_run, args.min_len, args.max_len), log)
+    sys.exit(1 if res["had_error"] else 0)
 
 
 if __name__ == "__main__":

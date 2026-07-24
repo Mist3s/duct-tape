@@ -99,8 +99,12 @@ scripts\build-exe.bat
 
 ```
 src/omsreg/
-  core/     общий код без tkinter: dbf, convert, errors, logging_setup, backup, textio
-  utils/    доменные утилиты (CLI + функции run_*): remove_error_talons, remove_codes, stat_stacionar, stat_economics
+  core/     общий код без tkinter: dbf, convert, format, errors, logging_setup, cli,
+            backup, textio, report_html
+  utils/    доменные утилиты-вкладки (CLI + функции run_*): remove_error_talons,
+            remove_codes, stat_stacionar, stat_economics
+    _shared/  вспомогательное (не вкладки): stat_common, removal_common,
+              stat_stacionar_report, stat_economics_report
   gui/      платформа: spec, registry, theme, config, log_panel, app, plugins/
 tests/      тесты ядра и утилит (без дисплея)
 ```

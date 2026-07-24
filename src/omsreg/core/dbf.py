@@ -1,10 +1,7 @@
-"""Единый минимальный читатель/писатель DBF (dBASE III/IV, FoxPro, Visual FoxPro).
+"""Минимальный читатель/писатель DBF (dBASE III/IV, FoxPro, Visual FoxPro).
 
-Раньше этот класс был скопирован в три модуля с двумя несовместимыми API
-(в одних — список кортежей полей и доступ по дескриптору, в другом — словарь полей
-и доступ по имени). Здесь они объединены: value() принимает и имя поля, и дескриптор
-DbfField, а записи хранятся списком (records) и одновременно доступны по индексу
-(record(i)) — так подходят оба прежних стиля вызова.
+value() принимает и имя поля, и дескриптор DbfField; записи хранятся списком
+(records) и одновременно доступны по индексу (record(i)) — удобно для обоих стилей вызова.
 
 Запись (save) сделана безопасной для боевых данных:
   * атомарно — сначала во временный файл рядом, fsync, затем os.replace, поэтому
@@ -23,6 +20,8 @@ from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
+
+from omsreg.core.errors import JobError
 
 TALON_FIELD_DEFAULT = "KOD_TALON"
 
@@ -97,7 +96,7 @@ class DbfTable:
         # обычно b'\x1a' (маркер конца файла) или пусто
         self.trailing = data[self.header_len + body_need :]
 
-    # --- совместимость с прежними компактными обращениями ---
+    # --- компактные обращения (по индексу записи) ---
     def __len__(self) -> int:
         return self.nrec
 
@@ -192,3 +191,23 @@ class DbfTable:
         except BaseException:
             tmp_path.unlink(missing_ok=True)
             raise
+
+
+def resolve_dbf_path(target) -> Path:
+    """Определяет DBF-файл по цели: сам файл или единственный DBF в папке.
+
+    Доменно-нейтральный резолвер (нужен любой утилите, берущей «файл или папку»).
+    Неоднозначность/отсутствие -> JobError с текстом для пользователя.
+    """
+    path = Path(target)
+    if path.is_dir():
+        dbfs = sorted(p for p in path.iterdir() if p.suffix.lower() == ".dbf")
+        if not dbfs:
+            raise JobError(f"В папке {path} нет ни одного DBF-файла")
+        if len(dbfs) > 1:
+            raise JobError("В папке несколько DBF-файлов — укажите нужный файл явно: "
+                           + ", ".join(p.name for p in dbfs))
+        return dbfs[0]
+    if not path.is_file():
+        raise JobError(f"Файл не найден: {path}")
+    return path
