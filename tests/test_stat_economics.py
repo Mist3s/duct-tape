@@ -3,10 +3,31 @@
 import pytest
 
 from omsreg.core import JobError
-from omsreg.utils.stat_economics import base_rate, full_payment, run_economics, underpaid
+from omsreg.utils._shared.stat_common import DAY_TYPE, ROUND_TYPE
+from omsreg.utils._shared.stat_economics_report import SHORT_KSG_LIMIT, TOP_KSG_LIMIT
+from omsreg.utils.stat_economics import (
+    SHORT_CASE_DAYS,
+    TRANSFER_ISHOD,
+    base_rate,
+    base_rates_by_type,
+    cause_breakdown,
+    full_payment,
+    is_short,
+    koef_counts,
+    koef_str,
+    run_economics,
+    type_order,
+    underpaid,
+)
 
 ECON_FIELDS = [("KOTD", 2), ("KMKB", 6), ("STOIM", 10), ("FACT", 3), ("ISHOD", 2),
                ("GRUPPA", 10), ("KOEF_Z", 8), ("KOEF_UP", 8), ("KOEF_PR", 6)]
+
+
+def _between(text: str, start: str, end: str) -> str:
+    """Кусок текста от первого вхождения start до следующего end (для разбора разделов отчёта)."""
+    i = text.index(start)
+    return text[i:text.index(end, i)]
 
 
 def test_cost_model_helpers():
@@ -15,6 +36,43 @@ def test_cost_model_helpers():
     assert full_payment(9000, 0.3) == pytest.approx(30000)
     assert underpaid(9000, 0.3) == pytest.approx(21000)   # недополучено
     assert underpaid(30000, 1.0) == 0                # полный случай — потерь нет
+
+
+def test_short_case_threshold_named():
+    # порог «короткого случая» — одна именованная константа, а не тройка в семи местах
+    assert is_short({"fact": SHORT_CASE_DAYS})
+    assert not is_short({"fact": SHORT_CASE_DAYS + 1})
+    assert not is_short({"fact": None})              # длительность неизвестна — не короткий
+
+
+def test_type_order_and_koef_str():
+    # публичные имена (были _type_order и coef_str): круглосуточный стационар выводится первым
+    assert type_order(ROUND_TYPE) == 0
+    assert type_order(DAY_TYPE) == 1
+    assert koef_str(1.5, None) == "1.5"              # одно значение на группу
+    assert koef_str(None, (0.8, 1.2)) == "0.8–1.2"   # в группе разные значения — диапазон
+    assert koef_str(None, None) == "—"
+
+
+def test_cause_breakdown_recoverable_is_machine_readable():
+    # признак «возвратно» — поле Cause.recoverable, а не разбор русской фразы note
+    cases = [
+        {"interrupted": True, "ishod": 1, "fact": 2, "gruppa": "st27.005", "underpaid": 1000.0},
+        {"interrupted": True, "ishod": 1, "fact": 2, "gruppa": "st99.999", "underpaid": 500.0},
+        {"interrupted": True, "ishod": 1, "fact": 9, "gruppa": "st27.005", "underpaid": 300.0},
+        {"interrupted": True, "ishod": TRANSFER_ISHOD, "fact": 4, "gruppa": "st27.005",
+         "underpaid": 200.0},
+        {"interrupted": False, "ishod": 1, "fact": 1, "gruppa": "st27.005", "underpaid": 0.0},
+    ]
+    causes = cause_breakdown(cases, {"st27.005"})
+    assert [c.recoverable for c in causes] == [True, None, False, False]
+    assert [len(c.cases) for c in causes] == [1, 1, 1, 1]   # полный случай ни в одну причину не попал
+    # возвратный резерв берётся по признаку, а не по первой строке списка
+    reserve = sum(x["underpaid"] for c in causes if c.recoverable for x in c.cases)
+    assert reserve == pytest.approx(1000.0)
+    # подписи причин построены от того же порога
+    assert f"1–{SHORT_CASE_DAYS} дня" in causes[0].label
+    assert f"≥{SHORT_CASE_DAYS + 1} дней" in causes[2].label
 
 
 def test_economics_report(make_dbf, tmp_path):
@@ -56,9 +114,32 @@ def test_economics_report(make_dbf, tmp_path):
     assert 'title="Гипертоническая болезнь в стадии обострения"' in html
 
 
+def test_txt_and_html_cut_tables_alike(make_dbf, tmp_path):
+    # таблицы обрезаются одинаково в .txt и .html: обе формы берут одну именованную константу
+    groups = SHORT_KSG_LIMIT + 5
+    rows = [("27", "I11.9", f"{1000 + i * 100}.00", "1", "1", f"st27.{i:03d}",
+             "0.90000", "1.00000", "0.5") for i in range(groups)]
+    dbf = make_dbf(tmp_path / "many.dbf", ECON_FIELDS, rows)
+    res = run_economics(str(dbf), "10", console=False)
+    codes = [f"st27.{i:03d}" for i in range(groups)]
+
+    txt_short = _between(res["text"], f"Короткие случаи (1–{SHORT_CASE_DAYS}", "ИТОГО")
+    html = res["html_path"].read_text(encoding="utf-8")
+    html_short = _between(html, f"Короткие случаи (1–{SHORT_CASE_DAYS}", "</table>")
+    assert [c for c in codes if c in txt_short] == [c for c in codes if c in html_short]
+    assert sum(c in txt_short for c in codes) == SHORT_KSG_LIMIT
+    # обрезка таблицы больше не молчит: ИТОГО считается по всем группам — и об этом сказано
+    cut = f"Показаны первые {SHORT_KSG_LIMIT} групп из {groups}; ИТОГО — по всем группам."
+    assert cut in res["text"] and cut in html
+
+    txt_ksg = _between(res["text"], "КСГ: ЧТО ЭТО ЗА ГРУППЫ", "МЕТОДИКА")
+    html_ksg = _between(html, "КСГ: что это за группы", "<h2>Методика")
+    assert [c for c in codes if c in txt_ksg] == [c for c in codes if c in html_ksg]
+    assert sum(c in txt_ksg for c in codes) == TOP_KSG_LIMIT
+
+
 def test_base_rate_and_koef_helpers():
     # базовая ставка восстанавливается по префиксу кода КСГ (st…/ds…), а не по отделению
-    from omsreg.utils.stat_economics import base_rates_by_type, koef_counts
     cases = [
         {"stoim": 30000.0, "kz": 0.9, "kup": 1.0, "kpr": 1.0, "gruppa": "st27.005"},
         {"stoim": 9000.0, "kz": 0.9, "kup": 1.0, "kpr": 0.3, "gruppa": "st27.005"},

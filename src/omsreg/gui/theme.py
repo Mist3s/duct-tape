@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import tkinter as tk
 from tkinter import ttk
 
@@ -32,10 +33,8 @@ MONO_FONT = ("Consolas", 10)
 def build_styles(root: tk.Misc) -> None:
     """Настраивает ttk-стили (кнопки, поля, вкладки, индикатор прогресса)."""
     st = ttk.Style(root)
-    try:
+    with contextlib.suppress(tk.TclError):
         st.theme_use("clam")
-    except tk.TclError:
-        pass
     st.configure("TFrame", background=C_BG)
     st.configure("Card.TFrame", background=C_CARD)
     st.configure("TLabel", background=C_BG, foreground=C_INK, font=UI_FONT)

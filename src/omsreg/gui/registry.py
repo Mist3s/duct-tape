@@ -15,15 +15,17 @@
 from __future__ import annotations
 
 import importlib
+import logging
 import pkgutil
 
+from omsreg.gui import plugins
 from omsreg.gui.spec import UtilitySpec
+
+log = logging.getLogger(__name__)
 
 
 def discover() -> list[UtilitySpec]:
     """Собирает SPEC встроенных и дополнительно найденных плагинов (без дублей по id)."""
-    from omsreg.gui import plugins
-
     seen: set[str] = set()
     specs: list[UtilitySpec] = []
 
@@ -38,12 +40,15 @@ def discover() -> list[UtilitySpec]:
         add(module)
 
     # 2) досканирование папки — работает при запуске из исходников
-    try:
-        for info in pkgutil.iter_modules(plugins.__path__):
-            if not info.name.startswith("_"):
-                add(importlib.import_module(f"{plugins.__name__}.{info.name}"))
-    except Exception:
-        pass
+    for info in pkgutil.iter_modules(plugins.__path__):
+        if info.name.startswith("_"):
+            continue
+        name = f"{plugins.__name__}.{info.name}"
+        try:
+            add(importlib.import_module(name))
+        except Exception:
+            # сбойный плагин не должен ни обрывать обход остальных, ни исчезать без следа
+            log.warning("Плагин %s не загружен, пропущен", name, exc_info=True)
 
     specs.sort(key=lambda s: (s.order, s.title))
     return specs

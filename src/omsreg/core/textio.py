@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 from pathlib import Path
@@ -17,10 +18,21 @@ TXT_ENCODINGS = ("cp1251", "utf-8-sig", "cp866")
 # порядок проб для списка кодов
 CODES_ENCODINGS = ("utf-8-sig", "cp1251", "cp866")
 
+# доля нулевых байтов, начиная с которой файл без BOM считаем UTF-16 (в тексте
+# из «Юникода» Блокнота каждый второй байт нулевой, в однобайтовом тексте нулей нет)
+UTF16_ZERO_RATIO = 0.2
+# сколько байтов от начала файла берём в выборку для проверки «текстовый ли он»
+BINARY_SAMPLE_BYTES = 65536
+# доля управляющих байтов в выборке, начиная с которой файл считаем бинарным
+BINARY_CTRL_RATIO = 0.02
+
 
 def detect_and_read_text(path: Path, log: logging.Logger | None = None) -> tuple[str, str]:
     """Читает текстовый файл, выбирая кодировку по числу найденных ключевых слов.
-    Возвращает (текст, имя_кодировки)."""
+
+    Возвращает (текст, имя_кодировки). Если ключевых слов не нашлось ни в одной
+    кодировке, принятая кодировка попадает в журнал как предупреждение.
+    """
     raw = Path(path).read_bytes()
     best = None  # (счёт, текст, кодировка)
     keywords = ("обработан файл", "код талона", "ошибок", "талон")
@@ -47,8 +59,10 @@ def detect_and_read_text(path: Path, log: logging.Logger | None = None) -> tuple
 
 
 def read_codes_file(path: Path, min_len: int, max_len: int):
-    """Читает файл со списком кодов. Возвращает (список int-кодов по порядку, кодировка,
-    пропущенные слишком длинные числа, пропущенные слишком короткие числа).
+    """Читает файл со списком кодов.
+
+    Возвращает (список int-кодов по порядку, кодировка, пропущенные слишком длинные
+    числа, пропущенные слишком короткие числа).
 
     Бинарные файлы (например, случайно указанный .dbf) отклоняются с ValueError.
     """
@@ -57,21 +71,18 @@ def read_codes_file(path: Path, min_len: int, max_len: int):
 
     # UTF-16 («Юникод» из Блокнота Windows): BOM или высокая доля нулевых байтов
     if raw[:2] in (b"\xff\xfe", b"\xfe\xff"):
-        try:
+        with contextlib.suppress(UnicodeDecodeError):
             text, enc = raw.decode("utf-16"), "utf-16"
-        except UnicodeDecodeError:
-            pass
-    elif raw and raw.count(0) / len(raw) > 0.2:
-        try:
+    elif raw and raw.count(0) / len(raw) > UTF16_ZERO_RATIO:
+        with contextlib.suppress(UnicodeDecodeError):
             text, enc = raw.decode("utf-16-le"), "utf-16 (без BOM)"
-        except UnicodeDecodeError:
-            pass
 
     if text is None:
-        # защита от бинарного файла: доля управляющих байтов (кроме \t\r\n и 0x1A)
-        sample = raw[:65536]
+        # защита от бинарного файла: доля управляющих байтов. Не считаются управляющими
+        # \t \n \v \f \r (9-13) и 0x1A — они встречаются в обычных текстовых файлах.
+        sample = raw[:BINARY_SAMPLE_BYTES]
         ctrl = sum(1 for b in sample if (b < 9 or 13 < b < 32 or b == 127) and b != 26)
-        if sample and ctrl / len(sample) > 0.02:
+        if sample and ctrl / len(sample) > BINARY_CTRL_RATIO:
             raise ValueError(
                 f"{Path(path).name}: файл не похож на текстовый список кодов (бинарные данные). "
                 f"Укажите обычный текстовый файл с кодами талонов."
@@ -94,9 +105,11 @@ def read_codes_file(path: Path, min_len: int, max_len: int):
 
 
 def extract_code_tokens(text: str, min_len: int, max_len: int):
-    """Извлекает из текста числа-коды длиной [min_len, max_len]. Возвращает
-    (список int-кодов по порядку, слишком длинные, слишком короткие). Используется
-    и при чтении файла, и при вводе кодов прямо в программе."""
+    """Извлекает из текста числа-коды длиной [min_len, max_len].
+
+    Возвращает (список int-кодов по порядку, слишком длинные, слишком короткие).
+    Используется и при чтении файла, и при вводе кодов прямо в программе.
+    """
     codes, too_long, too_short = [], [], []
     for token in re.findall(r"\d+", text):
         if len(token) > max_len:

@@ -3,7 +3,15 @@
 from __future__ import annotations
 
 from omsreg.core import TALON_FIELD_DEFAULT
-from omsreg.gui.spec import ActionSpec, JobResult, ParamKind, ParamSpec, RunContext, UtilitySpec
+from omsreg.gui.spec import (
+    ActionSpec,
+    BoxKind,
+    JobResult,
+    ParamKind,
+    ParamSpec,
+    RunContext,
+    UtilitySpec,
+)
 from omsreg.utils import remove_codes as codes
 
 
@@ -17,7 +25,7 @@ def _run(ctx: RunContext) -> JobResult:
     n, files = r["deleted_total"], r["files_changed"]
     if r["had_error"]:
         return JobResult("Работа завершена с ошибками. Подробности в журнале.",
-                         had_error=True, box_kind="warning", open_path=r["log_path"])
+                         had_error=True, box_kind=BoxKind.WARNING, open_path=r["log_path"])
     if r["dry_run"]:
         return JobResult(f"Проверка завершена. Под удаление попадает записей: {n}.\n"
                          "Файлы не изменялись. Для удаления нажмите «Удалить».",
@@ -25,12 +33,6 @@ def _run(ctx: RunContext) -> JobResult:
     return JobResult(f"Готово. Удалено записей: {n}, изменено файлов: {files}.\n"
                      "Резервные копии сохранены в папке backup_… рядом с данными.",
                      open_path=r["log_path"])
-
-
-def _confirm(p: dict) -> str:
-    return (f"Будут БЕЗВОЗВРАТНО удалены записи из DBF-файлов в папке:\n{p['dir']}\n\n"
-            "Перед изменением каждого файла создаётся резервная копия (папка backup_…).\n\n"
-            "Продолжить удаление?")
 
 
 def _validate(p: dict) -> str | None:
@@ -71,6 +73,5 @@ SPEC = UtilitySpec(
         ActionSpec("delete", "Удалить", "Danger.TButton", destructive=True, inject={"dry": False}),
     ),
     run=_run,
-    validate=_validate,
-    confirm_message=_confirm,
+    validate=_validate,  # текст подтверждения удаления — общий (App._default_confirm)
 )

@@ -13,19 +13,20 @@
 
 from __future__ import annotations
 
-import os
+import logging
 import queue
 import threading
 import tkinter as tk
 import webbrowser
+from importlib.resources import as_file, files
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from omsreg.core import QueueLogHandler
+from omsreg.core import JobError, QueueLogHandler
 from omsreg.gui import config as cfg
-from omsreg.gui.log_panel import LogPanel
+from omsreg.gui.log_panel import LogPanel, autohide_scrollbar
 from omsreg.gui.registry import discover
-from omsreg.gui.spec import ParamKind, RunContext, UtilitySpec
+from omsreg.gui.spec import BoxKind, ParamKind, RunContext, UtilitySpec
 from omsreg.gui.theme import (
     APP_TITLE,
     C_ACCENT,
@@ -44,18 +45,42 @@ from omsreg.gui.theme import (
     build_styles,
 )
 
+log = logging.getLogger(__name__)
+
+# отступ рабочей области от края карточки по вертикали (pady страницы вкладки);
+# высота карточки считается из него же, чтобы знание не разъезжалось по трём местам
+PAGE_PADY = 20
+
+# Прокрутка колесом: Windows/macOS присылают <MouseWheel> с полем delta,
+# X11 — <Button-4>/<Button-5> с номером кнопки num.
+WHEEL_SEQUENCES = ("<MouseWheel>", "<Button-4>", "<Button-5>")
+X11_WHEEL_UP = 4
+
+# вид итогового окна -> функция messagebox; перечислены ВСЕ значения BoxKind,
+# поэтому опечатка в плагине невозможна (это проверено тестом)
+MESSAGE_BOXES = {
+    BoxKind.INFO: messagebox.showinfo,
+    BoxKind.WARNING: messagebox.showwarning,
+    BoxKind.ERROR: messagebox.showerror,
+}
+
 
 class TextAreaVar:
-    """Обёртка над tk.Text с интерфейсом как у tk.Variable (get/set) — чтобы
-    многострочное поле встраивалось в общий механизм чтения значений и настроек."""
+    """Обёртка над tk.Text с интерфейсом tk.Variable (get/set).
+
+    Нужна, чтобы многострочное поле встраивалось в общий механизм чтения
+    значений полей и сохранения настроек.
+    """
 
     def __init__(self, text_widget):
         self._t = text_widget
 
     def get(self) -> str:
+        """Весь текст поля без завершающего перевода строки."""
         return self._t.get("1.0", "end-1c")
 
     def set(self, value) -> None:
+        """Заменяет содержимое поля строковым представлением value."""
         self._t.delete("1.0", "end")
         self._t.insert("1.0", str(value))
 
@@ -69,6 +94,7 @@ class UtilityTab:
         self.open_btn: ttk.Button | None = None
 
     def make_var(self, p) -> tk.Variable:
+        """Переменная tkinter под вид параметра, заполненная значением по умолчанию."""
         if p.kind is ParamKind.INT:
             return tk.IntVar(value=int(p.default or 0))
         if p.kind is ParamKind.BOOL:
@@ -77,6 +103,14 @@ class UtilityTab:
 
 
 class App(tk.Tk):
+    """Главное окно платформы: вкладки утилит, журнал, настройки и запуск задач.
+
+    Держит реестр спецификаций (self.specs), состояние вкладок (self.tabs),
+    очередь строк журнала из рабочего потока (self.queue) и признак занятости
+    (self.running). Задача выполняется в фоновом потоке, а весь обмен с
+    интерфейсом идёт через очередь: Tkinter не потокобезопасен.
+    """
+
     def __init__(self, specs: list[UtilitySpec] | None = None):
         super().__init__()
         self.title(APP_TITLE)
@@ -104,15 +138,13 @@ class App(tk.Tk):
 
     # ------------------------------------------------ оформление
     def _set_window_icon(self) -> None:
-        """Иконка окна (рулон синей изоленты). Молча пропускается, если недоступна."""
+        """Иконка окна (рулон синей изоленты). Пропускается, если файл недоступен."""
         try:
-            from importlib.resources import as_file, files
-
             with as_file(files("omsreg.gui").joinpath("assets/icon.png")) as path:
                 self._icon_img = tk.PhotoImage(file=str(path))
             self.iconphoto(True, self._icon_img)
-        except Exception:
-            pass
+        except Exception as e:  # оформление не повод не запускать программу
+            log.debug("Иконка окна не загружена: %s", e)
 
     def _build_header(self) -> None:
         head = tk.Frame(self, bg=C_HEADER)
@@ -125,9 +157,12 @@ class App(tk.Tk):
         tk.Frame(self, bg=C_ACCENT, height=3).pack(fill="x", side="top")
 
     def _build_body(self) -> None:
-        """Слева — вертикальный список утилит (с прокруткой, если не влезает по высоте),
-        справа — панель полей выбранной утилиты. Масштабируется на любое число утилит:
-        горизонтальная полоса вкладок ломалась уже на 4-5 длинных названиях."""
+        """Строит рабочую область: список утилит слева, поля выбранной утилиты справа.
+
+        Список вертикальный и с прокруткой, если не влезает по высоте. Такая
+        раскладка масштабируется на любое число утилит: горизонтальная полоса
+        вкладок ломалась уже на 4-5 длинных названиях.
+        """
         sidebar_w = 232
         self.active_tab = 0
         self.tab_buttons: list[tk.Label] = []
@@ -145,27 +180,25 @@ class App(tk.Tk):
         inner = tk.Frame(canvas, bg=C_BG)
         canvas.create_window((0, 0), window=inner, anchor="nw", width=sidebar_w)
 
-        def _autohide(first, last):
-            # полоса прокрутки показывается только когда список реально не влезает
-            if float(first) <= 0.0 and float(last) >= 1.0:
-                vsb.pack_forget()
-            elif not vsb.winfo_ismapped():
-                vsb.pack(side="left", fill="y")
-            vsb.set(first, last)
-
-        canvas.configure(yscrollcommand=_autohide)
+        canvas.configure(yscrollcommand=autohide_scrollbar(vsb, "left"))
         inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        def _wheel(e):
-            if inner.winfo_reqheight() > canvas.winfo_height():
-                canvas.yview_scroll(-1 if (getattr(e, "delta", 0) > 0 or e.num == 4) else 1, "units")
+        def _wheel(e) -> None:
+            if inner.winfo_reqheight() <= canvas.winfo_height():
+                return  # список влезает целиком — прокручивать нечего
+            up = getattr(e, "delta", 0) > 0 or getattr(e, "num", 0) == X11_WHEEL_UP
+            canvas.yview_scroll(-1 if up else 1, "units")
 
-        canvas.bind("<Enter>", lambda e: (canvas.bind_all("<MouseWheel>", _wheel),
-                                          canvas.bind_all("<Button-4>", _wheel),
-                                          canvas.bind_all("<Button-5>", _wheel)))
-        canvas.bind("<Leave>", lambda e: (canvas.unbind_all("<MouseWheel>"),
-                                          canvas.unbind_all("<Button-4>"),
-                                          canvas.unbind_all("<Button-5>")))
+        def _grab_wheel(_e) -> None:
+            for seq in WHEEL_SEQUENCES:
+                canvas.bind_all(seq, _wheel)
+
+        def _release_wheel(_e) -> None:
+            for seq in WHEEL_SEQUENCES:
+                canvas.unbind_all(seq)
+
+        canvas.bind("<Enter>", _grab_wheel)
+        canvas.bind("<Leave>", _release_wheel)
 
         # --- панель полей выбранной утилиты ---
         self.content_holder = tk.Frame(mid, bg=C_CARD, highlightthickness=1,
@@ -177,9 +210,9 @@ class App(tk.Tk):
                          padx=16, pady=12, bg=C_TAB_IDLE, fg=C_INK2, cursor="hand2",
                          wraplength=sidebar_w - 32)
             b.pack(fill="x", pady=(0, 2))
-            b.bind("<Button-1>", lambda e, idx=i: self._select_tab(idx))
-            b.bind("<Enter>", lambda e, idx=i: self._hover_tab(idx, True))
-            b.bind("<Leave>", lambda e, idx=i: self._hover_tab(idx, False))
+            b.bind("<Button-1>", lambda _e, idx=i: self._select_tab(idx))
+            b.bind("<Enter>", lambda _e, idx=i: self._hover_tab(idx, True))
+            b.bind("<Leave>", lambda _e, idx=i: self._hover_tab(idx, False))
             self.tab_buttons.append(b)
 
             page = tk.Frame(self.content_holder, bg=C_CARD)
@@ -194,11 +227,11 @@ class App(tk.Tk):
         # поэтому полоса прокрутки меню не мелькает при старте.
         page_h = 0
         for pg in self.tab_pages:
-            pg.pack(fill="both", expand=True, padx=22, pady=20)
+            pg.pack(fill="both", expand=True, padx=22, pady=PAGE_PADY)
             self.update_idletasks()
             page_h = max(page_h, pg.winfo_reqheight())
             pg.pack_forget()
-        holder_h = page_h + 40
+        holder_h = page_h + 2 * PAGE_PADY  # отступы страницы сверху и снизу
         self.content_holder.configure(height=holder_h)
         self.content_holder.pack_propagate(False)
         canvas.configure(height=holder_h)
@@ -216,7 +249,7 @@ class App(tk.Tk):
                      fg=C_ACCENT if i == idx else C_INK2)
         for pg in self.tab_pages:
             pg.pack_forget()
-        self.tab_pages[idx].pack(fill="both", expand=True, padx=22, pady=20)
+        self.tab_pages[idx].pack(fill="both", expand=True, padx=22, pady=PAGE_PADY)
 
     def _hover_tab(self, idx: int, on: bool) -> None:
         if idx != self.active_tab:
@@ -330,15 +363,7 @@ class App(tk.Tk):
         txt = tk.Text(box, height=p.height or 6, wrap="word", font=MONO_FONT, relief="flat",
                       bg="white", fg=C_INK, insertbackground=C_INK, undo=True, padx=8, pady=6)
 
-        def _autohide(first, last):
-            # полоса прокрутки видна только когда есть что прокручивать
-            if float(first) <= 0.0 and float(last) >= 1.0:
-                sb.pack_forget()
-            elif not sb.winfo_ismapped():
-                sb.pack(side="right", fill="y", before=txt)
-            sb.set(first, last)
-
-        txt.configure(yscrollcommand=_autohide)
+        txt.configure(yscrollcommand=autohide_scrollbar(sb, "right", before=txt))
         sb.config(command=txt.yview)
         txt.pack(side="left", fill="both", expand=True)
         if p.default:
@@ -367,23 +392,23 @@ class App(tk.Tk):
 
     # ------------------------------------------------ выбор файлов/папок
     def _pick_dir(self, var: tk.Variable) -> None:
-        d = filedialog.askdirectory(title="Выберите папку", initialdir=self._initdir(var))
+        d = filedialog.askdirectory(title="Выберите папку", initialdir=self._init_dir(var))
         if d:
             var.set(d)
 
     def _pick_file(self, var: tk.Variable, filetypes: list) -> None:
-        f = filedialog.askopenfilename(title="Выберите файл", initialdir=self._initdir(var),
+        f = filedialog.askopenfilename(title="Выберите файл", initialdir=self._init_dir(var),
                                        filetypes=filetypes + [("Все файлы", "*.*")])
         if f:
             var.set(f)
 
     @staticmethod
-    def _initdir(var: tk.Variable) -> str:
+    def _init_dir(var: tk.Variable) -> str:
         cur = str(var.get()).strip()
         if cur:
             p = Path(cur)
             return str(p if p.is_dir() else p.parent)
-        return os.getcwd()
+        return str(Path.cwd())
 
     # ------------------------------------------------ запуск задач
     def _run(self, spec: UtilitySpec, action) -> None:
@@ -422,9 +447,32 @@ class App(tk.Tk):
 
     @staticmethod
     def _default_confirm(params: dict) -> str:
-        return ("Будут БЕЗВОЗВРАТНО удалены записи из DBF-файлов.\n"
+        """Текст подтверждения разрушающего действия, если плагин не задал свой.
+
+        Единственная формулировка предупреждения об удалении на всю платформу:
+        если у утилиты есть параметр «dir», в текст добавляется сама папка.
+        """
+        target = params.get("dir")
+        head = (f"Будут БЕЗВОЗВРАТНО удалены записи из DBF-файлов в папке:\n{target}" if target
+                else "Будут БЕЗВОЗВРАТНО удалены записи из DBF-файлов.")
+        return (f"{head}\n\n"
                 "Перед изменением каждого файла создаётся резервная копия (папка backup_…).\n\n"
                 "Продолжить удаление?")
+
+    def _job_logger(self) -> logging.Logger:
+        """Логгер запущенной задачи — тот, к которому утилита прицепила наш обработчик.
+
+        Только через него запись попадает и в панель журнала, и в .log-файл задачи.
+        Если задача не успела настроить логирование, остаётся логгер интерфейса.
+        """
+        for name in list(logging.Logger.manager.loggerDict):
+            candidate = logging.getLogger(name)
+            if self.log_handler in getattr(candidate, "handlers", ()):
+                return candidate
+        if self.log_handler not in log.handlers:
+            log.addHandler(self.log_handler)
+            log.setLevel(logging.INFO)
+        return log
 
     def _start(self, util_id: str, func) -> None:
         self.running = True
@@ -436,7 +484,12 @@ class App(tk.Tk):
             result, exc = None, None
             try:
                 result = func()
-            except BaseException as e:  # JobError и любые прочие ошибки/прерывания
+            except JobError as e:
+                exc = e  # ожидаемая ошибка: её текст написан для пользователя
+            except Exception as e:
+                # внутренняя ошибка утилиты: трассировка нужна в журнале задачи и в .log,
+                # иначе разбирать инцидент нечем — пользователю видна одна строка
+                self._job_logger().exception("Внутренняя ошибка при выполнении задачи")
                 exc = e
             finally:
                 # "done" отправляется всегда — иначе интерфейс завис бы навсегда
@@ -464,9 +517,17 @@ class App(tk.Tk):
         for b in self.run_buttons:
             b.config(state="normal")
 
-        if exc is not None:
-            self.log.write(f"ОШИБКА: {exc}", tag="err")
-            messagebox.showerror(APP_TITLE, str(exc))
+        if exc is not None or result is None:
+            # трассировка внутренней ошибки уже в журнале (см. _start), пользователю —
+            # только короткая строка: текст JobError для него и написан, остальное — нет
+            if isinstance(exc, JobError):
+                msg = str(exc)
+            elif exc is not None:
+                msg = "Внутренняя ошибка, подробности в журнале."
+            else:  # задачу прервали (SystemExit/KeyboardInterrupt) — результата нет
+                msg = "Задача прервана и не вернула результат."
+            self.log.write(f"ОШИБКА: {msg}", tag="err")
+            messagebox.showerror(APP_TITLE, msg)
             return
 
         if result.log_text:
@@ -480,9 +541,9 @@ class App(tk.Tk):
                 tab.open_btn.config(state="normal")
             self._open_last()
 
-        box = {"info": messagebox.showinfo, "warning": messagebox.showwarning,
-               "error": messagebox.showerror}.get(result.box_kind, messagebox.showinfo)
-        box(APP_TITLE, result.summary)
+        # .get с запасным вариантом: сторонняя вкладка может вернуть box_kind строкой,
+        # и из-за этого пользователь не должен остаться без итогового окна
+        MESSAGE_BOXES.get(result.box_kind, messagebox.showinfo)(APP_TITLE, result.summary)
 
     def _open_last(self) -> None:
         if self.last_open and Path(self.last_open).exists():
@@ -506,23 +567,31 @@ class App(tk.Tk):
                 self.log.write(f"Создан файл настроек: {path}")
             return
         try:
-            data = cfg.read_kv(path)
+            data, bad_lines = cfg.read_kv(path)
         except OSError as e:
             self.log.write(f"Не удалось прочитать настройки: {e}", tag="err")
             return
+        for line in bad_lines:  # файл правят вручную — опечатка не должна исчезать
+            self.log.write(f"Настройки, строка не понята (нет «=»), пропущена — {line}", tag="warn")
+        bad_numbers = []
         for util_id, p, var in self._iter_config():
             raw = data.get(p.config_key(util_id))
             if raw is None and p.legacy_key:
                 raw = data.get(p.legacy_key)  # миграция со старой версии
             if raw is None:
                 continue
-            if isinstance(var, tk.IntVar):
+            if p.kind is ParamKind.INT:  # схема поля, а не тип переменной Tkinter
                 try:
                     var.set(int(raw))
                 except ValueError:
-                    pass
+                    # остаётся значение по умолчанию, но не молча: для длины кода
+                    # от него зависит, какие коды попадут под удаление
+                    bad_numbers.append(f"{p.config_key(util_id)} = {raw} (нужно число, "
+                                       f"взято {var.get()})")
             else:
                 var.set(raw)
+        for item in bad_numbers:
+            self.log.write(f"Настройки, значение не число — {item}", tag="warn")
         self.log.write(f"Настройки загружены из {path.name}")
 
     def _save_config(self, silent: bool = False) -> bool:
@@ -540,6 +609,8 @@ class App(tk.Tk):
                 self.log.write(f"Настройки сохранены в {path.name}", tag="ok")
             return True
         except OSError as e:
+            # и в тихом режиме сбой записи виден: иначе настройки сеанса теряются молча
+            self.log.write(f"Не удалось сохранить настройки в {path}: {e}", tag="err")
             if not silent:
                 messagebox.showerror(APP_TITLE, f"Не удалось сохранить настройки:\n{e}")
             return False
@@ -548,11 +619,14 @@ class App(tk.Tk):
         if self.running and not messagebox.askyesno(
                 APP_TITLE, "Идёт обработка. Точно закрыть программу?", default="no"):
             return
-        self._save_config(silent=True)
+        if not self._save_config(silent=True):
+            messagebox.showwarning(APP_TITLE, "Настройки этого сеанса не сохранены: "
+                                              "не удалось записать файл настроек.")
         self.destroy()
 
 
 def main() -> None:
+    """Точка входа графического интерфейса."""
     App().mainloop()
 
 

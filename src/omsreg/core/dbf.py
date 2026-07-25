@@ -1,7 +1,7 @@
 """Минимальный читатель/писатель DBF (dBASE III/IV, FoxPro, Visual FoxPro).
 
-value() принимает и имя поля, и дескриптор DbfField; записи хранятся списком
-(records) и одновременно доступны по индексу (record(i)) — удобно для обоих стилей вызова.
+Записи хранятся списком records — это основной способ обхода; record(i) и len(table)
+только тонкие обёртки над ним. value() принимает и имя поля, и дескриптор DbfField.
 
 Запись (save) сделана безопасной для боевых данных:
   * атомарно — сначала во временный файл рядом, fsync, затем os.replace, поэтому
@@ -21,6 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
+from omsreg.core.convert import as_code, as_float, as_int
 from omsreg.core.errors import JobError
 
 TALON_FIELD_DEFAULT = "KOD_TALON"
@@ -35,11 +36,14 @@ LDID_CODEPAGES = {
     0x03: "cp1252",
 }
 
-# флаг в байте 28 заголовка: наличие структурного .cdx-индекса
+# байт заголовка с признаками таблицы и флаг наличия структурного .cdx-индекса в нём
+HEADER_FLAGS_BYTE = 28
 FLAG_HAS_STRUCTURAL_INDEX = 0x01
 
 
 class DbfField(NamedTuple):
+    """Дескриптор поля DBF из заголовка таблицы."""
+
     name: str
     type: str
     offset: int  # смещение значения внутри записи (после байта-флага удаления)
@@ -47,8 +51,11 @@ class DbfField(NamedTuple):
 
 
 class DbfTable:
-    """Читает DBF целиком в память. Заголовок сохраняется байт-в-байт (кроме числа
-    записей, даты изменения и, по запросу, флага индекса)."""
+    """Читает DBF целиком в память.
+
+    Заголовок сохраняется байт-в-байт — меняются только число записей, дата
+    изменения и, по запросу, флаг структурного индекса.
+    """
 
     def __init__(self, path: Path):
         self.path = Path(path)
@@ -94,13 +101,13 @@ class DbfTable:
             for i in range(self.nrec)
         ]
         # обычно b'\x1a' (маркер конца файла) или пусто
-        self.trailing = data[self.header_len + body_need :]
+        self.trailing = data[self.header_len + body_need:]
 
     # --- компактные обращения (по индексу записи) ---
     def __len__(self) -> int:
         return self.nrec
 
-    def record(self, i: int) -> bytes:
+    def record(self, i: int) -> bytes:  # noqa: D102 - тривиальный доступ по индексу
         return self.records[i]
 
     # --- доступ к полям ---
@@ -108,7 +115,7 @@ class DbfTable:
         """Дескриптор поля по имени (без учёта регистра) или None."""
         return self._by_name.get(name.upper())
 
-    def has_field(self, name: str) -> bool:
+    def has_field(self, name: str) -> bool:  # noqa: D102 - смысл исчерпан именем
         return name.upper() in self._by_name
 
     def _resolve(self, field: str | DbfField) -> DbfField:
@@ -126,18 +133,18 @@ class DbfTable:
         return raw.replace(b"\x00", b" ").decode(self.codepage, "replace").strip()
 
     def int_value(self, record: bytes, field: str | DbfField) -> int | None:
-        from omsreg.core.convert import as_int
-
+        """Целое значение поля мягким разбором (as_int) или None, если это не число."""
         return as_int(self.value(record, field))
 
     def float_value(self, record: bytes, field: str | DbfField) -> float | None:
-        from omsreg.core.convert import as_float
-
+        """Дробное значение поля мягким разбором (as_float; запятая — тоже разделитель)."""
         return as_float(self.value(record, field))
 
     def code_value(self, record: bytes, field: str | DbfField) -> int | None:
-        from omsreg.core.convert import as_code
+        """Код талона строгим разбором (as_code: только цифры) или None.
 
+        Строгость намеренная: от результата зависит, попадёт ли запись под удаление.
+        """
         return as_code(self.value(record, field))
 
     def is_deleted(self, record: bytes) -> bool:
@@ -172,8 +179,8 @@ class DbfTable:
             hdr[1] = now.year % 100
             hdr[2] = now.month
             hdr[3] = now.day
-        if clear_structural_index and len(hdr) > 28:
-            hdr[28] &= ~FLAG_HAS_STRUCTURAL_INDEX & 0xFF
+        if clear_structural_index:
+            hdr[HEADER_FLAGS_BYTE] &= ~FLAG_HAS_STRUCTURAL_INDEX & 0xFF
 
         fd, tmp_name = tempfile.mkstemp(
             dir=str(out_path.parent), prefix=f".{out_path.name}.", suffix=".tmp"
@@ -187,7 +194,7 @@ class DbfTable:
                 f.write(b"\x1a")  # стандартный маркер конца файла
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, out_path)  # атомарная замена в пределах ФС
+            tmp_path.replace(out_path)  # атомарная замена в пределах ФС
         except BaseException:
             tmp_path.unlink(missing_ok=True)
             raise

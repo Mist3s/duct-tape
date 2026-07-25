@@ -18,7 +18,8 @@ ISHOD (исход). Поправочный коэффициент задаётс
 правилах КСГ и тарифном соглашении, из выгрузки не определяется (это НЕ «уровень
 отделения»: в одном отделении встречаются разные значения).
 
-Модель оплаты и агрегации — здесь; построение отчётов — в stat.economics_report.
+Модель оплаты и агрегации — здесь; построение отчётов — в
+omsreg.utils._shared.stat_economics_report.
 
 Примеры запуска:
     omsreg-econ data/0091_016.dbf
@@ -32,10 +33,12 @@ import logging
 from collections import Counter, defaultdict
 from datetime import datetime
 from statistics import median
+from typing import NamedTuple
 
 from omsreg.core import DbfTable, JobError, as_float, as_int, resolve_dbf_path, setup_job_logging
 from omsreg.core.cli import run_or_exit
 from omsreg.utils._shared.stat_common import (
+    DAY_KOTD_DEFAULT,
     DAY_TYPE,
     ISHOD_NAMES,
     ROUND_TYPE,
@@ -58,12 +61,18 @@ ECON_FIELDS = {
 
 TRANSFER_ISHOD = 5  # исход «перевод»
 
+# граница «короткого случая» в койко-днях: столько дней и меньше — случай считается коротким
+# (недооплата у таких случаев чаще всего устраняется длительностью лечения)
+SHORT_CASE_DAYS = 3
+
 # короткие подписи типа стационара и порядок вывода (круглосуточный первым)
 TYPE_SHORT = {ROUND_TYPE: "кругл.", DAY_TYPE: "дневн."}
 
 
-def _type_order(t) -> int:
+def type_order(t) -> int:
+    """Ключ сортировки типа стационара: круглосуточный (0) выводится перед дневным (1)."""
     return 0 if t == ROUND_TYPE else 1
+
 
 # главы МКБ по первой букве кода — чтобы пояснить, что за диагнозы в группе КСГ
 MKB_CHAPTERS = {
@@ -77,6 +86,7 @@ MKB_CHAPTERS = {
 
 
 def mkb_chapter(code: str) -> str:
+    """Глава МКБ по первой букве кода диагноза ('J18.9' -> 'органы дыхания'), иначе ''."""
     return MKB_CHAPTERS.get((code or "")[:1].upper(), "")
 
 
@@ -176,6 +186,11 @@ def collect(table: DbfTable, day_kotd, fields=None):
 
 # ----------------------------- агрегации -----------------------------
 
+def is_short(case) -> bool:
+    """Короткий случай: длительность известна и не больше SHORT_CASE_DAYS койко-дней."""
+    return case["fact"] is not None and case["fact"] <= SHORT_CASE_DAYS
+
+
 def _avg(values):
     values = [v for v in values if v is not None]
     return sum(values) / len(values) if values else None
@@ -231,7 +246,7 @@ def dept_rows(cases):
             "days": _avg([c["fact"] for c in cs]), "per_day": _per_day(s, cs),
             "full_pct": full / len(cs) * 100, "under": sum(c["underpaid"] for c in cs),
         })
-    rows.sort(key=lambda r: (_type_order(r["type"]), -(r["per_day"] or 0)))
+    rows.sort(key=lambda r: (type_order(r["type"]), -(r["per_day"] or 0)))
     return rows
 
 
@@ -243,9 +258,8 @@ def ksg_rows(cases):
     rows = []
     for g, cs in by.items():
         full = [c for c in cs if not c["interrupted"]]
-        # короткие: недооплаченные, реально короткие (≤3 дней) и не переводы
-        short = [c for c in cs if c["interrupted"] and c["ishod"] != TRANSFER_ISHOD
-                 and c["fact"] is not None and c["fact"] <= 3]
+        # короткие: недооплаченные, реально короткие (≤ SHORT_CASE_DAYS дней) и не переводы
+        short = [c for c in cs if c["interrupted"] and c["ishod"] != TRANSFER_ISHOD and is_short(c)]
         s = sum(c["stoim"] for c in cs)
         chapters = Counter(mkb_chapter(c["kmkb"]) for c in cs if mkb_chapter(c["kmkb"]))
         # вес КСГ (KOEF_Z) и поправочный коэф. (KOEF_UP) — в норме по одному на группу;
@@ -280,7 +294,7 @@ def dx_examples(dx: Counter, limit: int = 3) -> str:
     return ", ".join(f"{code}×{cnt}" for code, cnt in dx.most_common(limit))
 
 
-def coef_str(value, rng) -> str:
+def koef_str(value, rng) -> str:
     """Коэффициент строкой: одно значение, диапазон (если в группе разные) или «—»."""
     if value is not None:
         return f"{value:g}"
@@ -290,8 +304,10 @@ def coef_str(value, rng) -> str:
 
 
 def ishod_rows(cases):
-    """Связь исхода с оплатой: сколько случаев, полных/сниженных, средний коэффициент, недооплата.
-    Отсортировано по недополученной сумме (самые влияющие исходы сверху)."""
+    """Связь исхода с оплатой: сколько случаев, полных и сниженных, сколько недополучено.
+
+    Отсортировано по недополученной сумме (самые влияющие исходы сверху).
+    """
     by = defaultdict(list)
     for c in cases:
         by[c["ishod"]].append(c)
@@ -306,26 +322,41 @@ def ishod_rows(cases):
     return rows
 
 
-def cause_breakdown(cases, groups_with_full):
-    """Разбивка недополученной суммы по причинам. Возвращает список (подпись, случаи, возвратно?)."""
+class Cause(NamedTuple):
+    """Причина недополученной оплаты: подпись, попавшие случаи и признак возвратности.
+
+    recoverable — можно ли вернуть недоплату длительностью лечения: True (да),
+    False (нет) или None (по данным файла не определить). Признак машинный:
+    отчёты красят строку по нему, а не по разбору текста note.
+    """
+
+    label: str
+    cases: list
+    recoverable: bool | None
+    note: str
+
+
+def cause_breakdown(cases, groups_with_full) -> list:
+    """Разбивка недополученной суммы по причинам. -> список Cause в порядке вывода в отчёт."""
     tr = [c for c in cases if c["interrupted"] and c["ishod"] == TRANSFER_ISHOD]
     ntr = [c for c in cases if c["interrupted"] and c["ishod"] != TRANSFER_ISHOD]
-    is_short = lambda c: c["fact"] is not None and c["fact"] <= 3  # noqa: E731
     short_full = [c for c in ntr if is_short(c) and c["gruppa"] in groups_with_full]
     short_nofull = [c for c in ntr if is_short(c) and c["gruppa"] not in groups_with_full]
     longred = [c for c in ntr if not is_short(c)]
     return [
-        ("Короткие 1–3 дня, в группе есть полные случаи", short_full, "да — довести до нормы группы"),
-        ("Короткие 1–3 дня, в группе нет полных случаев", short_nofull,
-         "по данным не определить — свериться с правилами КСГ"),
-        ("Прерванные ≥4 дней (не переводы)", longred, "нет — правила/норматив КСГ"),
-        ("Переводы в другой стационар", tr, "нет — организационный вопрос"),
+        Cause(f"Короткие 1–{SHORT_CASE_DAYS} дня, в группе есть полные случаи", short_full,
+              True, "да — довести до нормы группы"),
+        Cause(f"Короткие 1–{SHORT_CASE_DAYS} дня, в группе нет полных случаев", short_nofull,
+              None, "по данным не определить — свериться с правилами КСГ"),
+        Cause(f"Прерванные ≥{SHORT_CASE_DAYS + 1} дней (не переводы)", longred,
+              False, "нет — правила/норматив КСГ"),
+        Cause("Переводы в другой стационар", tr, False, "нет — организационный вопрос"),
     ]
 
 
 # ----------------------------- запуск -----------------------------
 
-def run_economics(target, day_kotd="10,15,12", fields=None, kotd_names=None,
+def run_economics(target, day_kotd=DAY_KOTD_DEFAULT, fields=None, kotd_names=None,
                   extra_handlers=None, console=True) -> dict:
     """Строит экономический отчёт стационара (.txt/.html рядом с DBF). -> dict с путями и итогами."""
     from omsreg.utils._shared.stat_economics_report import build_html, build_report
@@ -351,7 +382,7 @@ def run_economics(target, day_kotd="10,15,12", fields=None, kotd_names=None,
         log.warning("нет полей: %s — соответствующие разделы сокращены", ", ".join(missing))
 
     log.info("Считаю экономику…")
-    text = "\n".join(build_report(path, cases, deleted, day_kotd_set, avail, kotd_names))
+    text = "\n".join(build_report(path, cases, deleted, avail, kotd_names))
     txt_path = base.with_suffix(".txt")
     html_path = base.with_suffix(".html")
     txt_path.write_text(text + "\n", encoding="utf-8")
@@ -363,7 +394,7 @@ def run_economics(target, day_kotd="10,15,12", fields=None, kotd_names=None,
             "underpaid": sum(c["underpaid"] for c in cases)}
 
 
-def main() -> None:
+def main() -> None:  # noqa: D103 - назначение утилиты в ArgumentParser(description=...), попадает в --help
     parser = argparse.ArgumentParser(
         description="Экономика и эффективность стационара по DBF (доходность койки, разбор недооплаты, КСГ).")
     parser.add_argument("dbf", help="DBF-файл или папка с одним DBF")

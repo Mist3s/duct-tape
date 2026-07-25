@@ -6,6 +6,7 @@
     через extra_css у page().
   * page() — скелет документа (DOCTYPE/head/style/body/wrap/закрытие).
   * tile() — карточка-показатель (крупное значение над подписью).
+  * bar() — полоса величины с подписью (разметка под .barwrap/.bar из BASE_CSS).
 
 Модуль доменно-нейтрален и не импортирует tkinter, поэтому живёт в core.
 """
@@ -28,12 +29,14 @@ BASE_CSS = (
     ".tile { background:var(--card); border:1px solid var(--border); border-radius:10px; padding:12px 18px; min-width:150px; }\n"
     ".tile .v { font-size:22px; font-weight:700; white-space:nowrap; } .tile .l { font-size:12.5px; color:var(--ink2); margin-top:2px; }\n"
     "table { border-collapse:collapse; width:100%; font-size:14px; font-variant-numeric:tabular-nums; }\n"
-    "th { text-align:left; color:var(--ink2); font-weight:600; font-size:12.5px; border-bottom:2px solid var(--border); padding:6px 10px; white-space:nowrap; }\n"
+    "th { text-align:left; color:var(--ink2); font-weight:600; font-size:12.5px; "
+    "border-bottom:2px solid var(--border); padding:6px 10px; white-space:nowrap; }\n"
     "td { border-bottom:1px solid var(--border); padding:5px 10px; }\n"
     "td.num,th.num { text-align:right; white-space:nowrap; }\n"
     "tr.total td { font-weight:700; border-top:2px solid var(--border); }\n"
     ".barwrap { position:relative; } .barwrap .bar { position:absolute; left:0; top:50%;\n"
-    "  transform:translateY(-50%); height:10px; background:var(--bar); border-radius:0 4px 4px 0; } .barwrap span { position:relative; padding-left:4px; }\n"
+    "  transform:translateY(-50%); height:10px; background:var(--bar); border-radius:0 4px 4px 0; }"
+    " .barwrap span { position:relative; padding-left:4px; }\n"
     "@media print { body { padding:0; } }\n"
 )
 
@@ -55,7 +58,21 @@ def page(title: str, body: str, *, extra_css: str = "", script: str = "", lang: 
 
 
 def tile(value, label, cls: str = "") -> str:
-    """Карточка-показатель: крупное значение над подписью. cls — доп. класс
-    значения ('bad'/'good'/'warn' для цветовой пометки)."""
+    """Карточка-показатель: крупное значение над подписью.
+
+    cls — доп. класс значения ('bad'/'good'/'warn' для цветовой пометки).
+    """
     v_cls = f"v {cls}" if cls else "v"
     return f'<div class="tile"><div class="{v_cls}">{value}</div><div class="l">{label}</div></div>'
+
+
+def bar(share, text, *, digits: int = 1) -> str:
+    """Полоса величины с подписью: ширина — доля share (0..1) от строки-лидера.
+
+    Оформление полосы задаёт BASE_CSS (.barwrap/.bar), поэтому и разметка живёт
+    здесь: отчёты статистики и экономики писали её каждый свою. digits — знаков
+    после запятой в ширине полосы (в статистике 1, в экономике 0).
+    """
+    w = max(0.0, min(1.0, share)) * 100
+    return (f'<div class="barwrap"><div class="bar" style="width:{w:.{digits}f}%"></div>'
+            f'<span>{text}</span></div>')

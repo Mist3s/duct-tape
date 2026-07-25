@@ -157,7 +157,8 @@ src/omsreg/
     _shared/  вспомогательное (не вкладки): stat_common, removal_common,
               stat_stacionar_report, stat_economics_report, stat_deaths_report,
               ksg_catalog (справочник КСГ), mkb_death_groups (+ .csv — справочник причин смерти)
-  gui/      платформа: spec, registry, theme, config, log_panel, app, plugins/
+  gui/      платформа: spec, registry, theme, config, log_panel, app, plugin_fields
+              (общие поля вкладок), plugins/ — только модули-плагины: один файл = одна вкладка
 tests/      тесты ядра и утилит (без дисплея)
 tools/      сервисные скрипты (в пакет не входят): build_ksg_catalog.py —
             сборка справочника КСГ из официальных xlsx
@@ -184,6 +185,11 @@ pip install -e .[dev]
 ruff check .
 pytest -q
 ```
+
+Набор правил ruff (`E F W I UP B N D ARG SIM RET C4 PERF PTH PLC0415 RUF100 C90
+PLR091x`, `preview = true`) задан в `pyproject.toml`; там же — исключения по файлам,
+включая блок «ВРЕМЕННО, технический долг» (сложность и число аргументов у ещё не
+разрезанных функций). Обе проверки должны проходить без замечаний.
 
 ## Лицензия
 

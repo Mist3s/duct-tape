@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from omsreg.gui.spec import ActionSpec, JobResult, ParamKind, ParamSpec, RunContext, UtilitySpec
+from omsreg.gui.plugin_fields import (
+    DAY_KOTD_DEFAULT,
+    day_kotd_param,
+    dbf_field_param,
+    kotd_names_param,
+    target_param,
+)
+from omsreg.gui.spec import ActionSpec, JobResult, ParamSpec, RunContext, UtilitySpec
+from omsreg.utils import parse_kotd_names
 from omsreg.utils import stat_stacionar as stat
-from omsreg.utils._shared import stat_common as common
 
 _DF = stat.DEFAULT_FIELDS  # {"kotd": "KOTD", ...}
 
@@ -13,8 +20,8 @@ def _run(ctx: RunContext) -> JobResult:
     p = ctx.params
     fields = {"kotd": p["field_kotd"], "kmkb": p["field_kmkb"], "stoim": p["field_stoim"],
               "ishod": p["field_ishod"], "fact": p["field_fact"]}
-    kotd_names = common.parse_kotd_names(p.get("kotd_names", ""))
-    res = stat.run_stat(p["target"], p["day_kotd"] or "10,15,12", fields, kotd_names,
+    kotd_names = parse_kotd_names(p.get("kotd_names", ""))
+    res = stat.run_stat(p["target"], p["day_kotd"] or DAY_KOTD_DEFAULT, fields, kotd_names,
                         extra_handlers=[ctx.log_handler], console=False)
     return JobResult(
         summary=(f"Готово. Случаев: {res['cases']}. Файлы: "
@@ -25,8 +32,7 @@ def _run(ctx: RunContext) -> JobResult:
 
 
 def _field(key: str, label: str, df_key: str, legacy: str) -> ParamSpec:
-    return ParamSpec(key, label, ParamKind.TEXT, default=_DF[df_key],
-                     advanced=True, group="fields", width=14, legacy_key=legacy)
+    return dbf_field_param(key, label, _DF[df_key], width=14, legacy_key=legacy)
 
 
 SPEC = UtilitySpec(
@@ -39,17 +45,9 @@ SPEC = UtilitySpec(
         "Койко-дни (поле FACT) — необязательно; если поля нет, раздел пропускается."
     ),
     params=(
-        ParamSpec("target", "DBF-файл или папка:", ParamKind.PATH, required=True,
-                  filetypes=(("DBF", "*.dbf"),),
-                  require_msg="Укажите DBF-файл или папку.", legacy_key="статистика_путь"),
-        ParamSpec("day_kotd", "Коды отделений ДС:", ParamKind.TEXT,
-                  default="10,15,12", width=18,
-                  hint="через запятую; остальные отделения — круглосуточный стационар",
-                  legacy_key="дневной_стационар_коды"),
-        ParamSpec("kotd_names", "Названия отделений:", ParamKind.TEXT, advanced=True,
-                  default=common.format_kotd_names(common.KOTD_NAMES),
-                  hint="формат: 23=Пульмонологическое; 27=Терапевтическое; 61=Неврологическое",
-                  legacy_key="названия_отделений"),
+        target_param(),
+        day_kotd_param(),
+        kotd_names_param(),
         _field("field_kotd", "Отделение (KOTD):", "kotd", "поле_отделение"),
         _field("field_kmkb", "Код МКБ:", "kmkb", "поле_мкб"),
         _field("field_stoim", "Стоимость:", "stoim", "поле_стоимость"),

@@ -24,23 +24,31 @@ HEADER_LINES = (
 
 def config_path() -> Path:
     """Путь к файлу настроек — рядом с программой (exe) или в текущей папке запуска."""
-    if getattr(sys, "frozen", False):
-        base = Path(sys.executable).resolve().parent
-    else:
-        base = Path.cwd()
+    # frozen -> папка рядом с exe, иначе текущая папка запуска
+    base = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path.cwd()
     return base / CONFIG_NAME
 
 
-def read_kv(path: Path) -> dict[str, str]:
-    """Читает файл «ключ = значение» -> словарь. Пустые строки и '#'-комментарии пропускаются."""
+def read_kv(path: Path) -> tuple[dict[str, str], list[str]]:
+    """Читает файл «ключ = значение».
+
+    Возвращает (значения, непонятые строки). Пустые строки и '#'-комментарии
+    пропускаются молча, а строка без «=» — это опечатка в файле, который правят
+    вручную, поэтому она попадает во второй элемент (с номером строки), а не
+    исчезает бесследно.
+    """
     data: dict[str, str] = {}
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
+    problems: list[str] = []
+    for num, raw in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            problems.append(f"строка {num}: {line}")
             continue
         k, v = line.split("=", 1)
         data[k.strip()] = v.strip()
-    return data
+    return data, problems
 
 
 def write_kv(path: Path, items: list[tuple[str, str]]) -> None:

@@ -6,18 +6,6 @@
 пакета не импортирует tkinter — поэтому всё тестируется без дисплея.
 """
 
-from omsreg.core.convert import as_code, as_float, as_int
-from omsreg.core.dbf import (
-    LDID_CODEPAGES,
-    TALON_FIELD_DEFAULT,
-    DbfField,
-    DbfTable,
-    resolve_dbf_path,
-)
-from omsreg.core.errors import JobError
-from omsreg.core.format import csv_num, money, pct
-from omsreg.core.logging_setup import QueueLogHandler, setup_job_logging
-
 __all__ = [
     "DbfTable",
     "DbfField",
@@ -34,3 +22,15 @@ __all__ = [
     "setup_job_logging",
     "QueueLogHandler",
 ]
+
+from omsreg.core.convert import as_code, as_float, as_int
+from omsreg.core.dbf import (
+    LDID_CODEPAGES,
+    TALON_FIELD_DEFAULT,
+    DbfField,
+    DbfTable,
+    resolve_dbf_path,
+)
+from omsreg.core.errors import JobError
+from omsreg.core.format import csv_num, money, pct
+from omsreg.core.logging_setup import QueueLogHandler, setup_job_logging

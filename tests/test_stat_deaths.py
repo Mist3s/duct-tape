@@ -7,32 +7,59 @@ import pytest
 
 from omsreg.core import JobError
 from omsreg.utils._shared.mkb_death_groups import load_rules
+from omsreg.utils._shared.stat_deaths_report import build_html, build_report
 from omsreg.utils.stat_deaths import build_matrix, read_source, run_deaths
 
 NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
+
+def _tr(*cells):
+    """Строка HTML-таблицы из готовых ячеек."""
+    return "<tr>" + "".join(cells) + "</tr>"
+
+
+def _data_row(*cells):
+    """Строка данных выгрузки: № ИБ, ФИО, пол, возраст, отделение, даты, дней, диагнозы."""
+    return _tr(*(f"<td>{v}</td>" for v in cells))
+
+
 # выгрузка «Отчёт по умершим» — это HTML-таблица (как экспорт мед-системы)
-_HTML = """<html><body>
-<p>Список пациентов (умершие за период с 01.01.2026 по 31.03.2026 )</p>
-<table>
-<tr><td rowspan="2">№ ИБ</td><td rowspan="2">Ф.И.О.</td><td rowspan="2">Пол</td>
-<td rowspan="2">Возр.</td><td rowspan="2">Отделение</td><td rowspan="2">Дата поступл.</td>
-<td rowspan="2">Дата выписки</td><td rowspan="2">Кол. дней</td><td colspan="2">Диагнозы</td></tr>
-<tr><td>Клинич.</td><td>Патологоан.</td></tr>
-<tr><td>1</td><td>А</td><td>Мужской</td><td>70</td><td>Терапевтическое отделение</td><td>02.01.2026</td><td>05.01.2026</td><td>3</td><td>I25.5</td><td></td></tr>
-<tr><td>2</td><td>Б</td><td>Женский</td><td>80</td><td>Терапевтическое отделение</td><td>03.01.2026</td><td>06.01.2026</td><td>3</td><td>I48.0</td><td></td></tr>
-<tr><td>3</td><td>В</td><td>Мужской</td><td>65</td><td>Неврологическое отделение №1</td><td>01.02.2026</td><td>10.02.2026</td><td>9</td><td>G93.4</td><td></td></tr>
-<tr><td>4</td><td>Г</td><td>Женский</td><td>77</td><td>Неврологическое отделение №1</td><td>05.02.2026</td><td>12.02.2026</td><td>7</td><td>I63.9</td><td></td></tr>
-<tr><td>5</td><td>Д</td><td>Мужской</td><td>72</td><td>Пульмонологическое отделение</td><td>02.03.2026</td><td>08.03.2026</td><td>6</td><td>J18.9</td><td></td></tr>
-<tr><td>6</td><td>Е</td><td>Женский</td><td>60</td><td>Терапевтическое отделение</td><td>03.03.2026</td><td>09.03.2026</td><td>6</td><td>C34.9</td><td></td></tr>
-<tr><td>7</td><td>Ж</td><td>Мужской</td><td>68</td><td>Терапевтическое отделение</td><td>04.03.2026</td><td>10.03.2026</td><td>6</td><td></td><td>E11.6</td></tr>
-</table></body></html>"""
+_HEAD = (
+    "<html><body>\n"
+    "<p>Список пациентов (умершие за период с 01.01.2026 по 31.03.2026 )</p>\n"
+    "<table>\n"
+    + _tr('<td rowspan="2">№ ИБ</td>', '<td rowspan="2">Ф.И.О.</td>',
+          '<td rowspan="2">Пол</td>', '<td rowspan="2">Возр.</td>',
+          '<td rowspan="2">Отделение</td>', '<td rowspan="2">Дата поступл.</td>',
+          '<td rowspan="2">Дата выписки</td>', '<td rowspan="2">Кол. дней</td>',
+          '<td colspan="2">Диагнозы</td>')
+    + "\n" + _tr("<td>Клинич.</td>", "<td>Патологоан.</td>") + "\n"
+)
+_TERAPIYA = "Терапевтическое отделение"
+_NEVRO = "Неврологическое отделение №1"
+_ROWS = "\n".join([
+    _data_row(1, "А", "Мужской", 70, _TERAPIYA, "02.01.2026", "05.01.2026", 3, "I25.5"),
+    _data_row(2, "Б", "Женский", 80, _TERAPIYA, "03.01.2026", "06.01.2026", 3, "I48.0"),
+    _data_row(3, "В", "Мужской", 65, _NEVRO, "01.02.2026", "10.02.2026", 9, "G93.4"),
+    _data_row(4, "Г", "Женский", 77, _NEVRO, "05.02.2026", "12.02.2026", 7, "I63.9"),
+    _data_row(5, "Д", "Мужской", 72, "Пульмонологическое отделение",
+              "02.03.2026", "08.03.2026", 6, "J18.9"),
+    _data_row(6, "Е", "Женский", 60, _TERAPIYA, "03.03.2026", "09.03.2026", 6, "C34.9"),
+    _data_row(7, "Ж", "Мужской", 68, _TERAPIYA, "04.03.2026", "10.03.2026", 6, "", "E11.6"),
+])
+_HTML = _HEAD + _ROWS + "\n</table></body></html>"
 
 
-def _src(tmp_path):
+def _src(tmp_path, body=_HTML):
     p = tmp_path / "Отчет по умершим.xls"   # расширение .xls, но внутри HTML
-    p.write_text(_HTML, encoding="utf-8")
+    p.write_text(body, encoding="utf-8")
     return p
+
+
+def _rules():
+    rules, problems = load_rules()
+    assert problems == []
+    return rules
 
 
 def _xlsx_rows(path):
@@ -51,25 +78,38 @@ def _xlsx_rows(path):
 
 
 def test_read_source(tmp_path):
-    recs, period = read_source(_src(tmp_path))
-    assert len(recs) == 7
-    assert period[0].isoformat() == "2026-01-01" and period[1].isoformat() == "2026-03-31"
-    r0 = recs[0]
-    assert r0["dept"] == "Терапевтическое отделение"
+    src = read_source(_src(tmp_path))
+    assert len(src.records) == 7
+    assert src.period[0].isoformat() == "2026-01-01" and src.period[1].isoformat() == "2026-03-31"
+    assert src.encoding == "utf-8-sig" and src.problems == []
+    r0 = src.records[0]
+    assert r0["dept"] == _TERAPIYA
     assert r0["clin"] == "I25.5" and r0["d_out"].month == 1
-    assert recs[6]["clin"] == "" and recs[6]["pat"] == "E11.6"   # клинический пуст, есть патолог.
+    # клинический пуст, есть патологоанатомический
+    assert src.records[6]["clin"] == "" and src.records[6]["pat"] == "E11.6"
 
 
 def test_matrix_aggregation(tmp_path):
-    recs, _ = read_source(_src(tmp_path))
-    m = build_matrix(recs, load_rules())
-    assert m["grand_total"] == 7
-    gt = m["group_total"]
+    path = _src(tmp_path)
+    src = read_source(path)
+    m = build_matrix(src.records, _rules(), period=src.period, source=path)
+    assert m.grand_total == 7
+    gt = m.group_total
     assert gt["Болезни нервной системы"] == 2        # G93.4 + инсульт I63.9
     assert gt["Болезни кровообращения"] == 2         # I25.5 + I48.0
     assert gt["Болезни органов дыхания"] == 1        # J18.9
     assert gt["Болезни эндокринной системы"] == 1    # E11.6 из патологоанатомического
-    assert m["unclassified"]["C34.9"] == 1 and "Прочие" in m["columns"]
+    assert m.unclassified["C34.9"] == 1 and "Прочие" in m.columns
+
+
+def test_report_from_bare_matrix(tmp_path):
+    # build_matrix даёт полный агрегат: отчёт строится без дописывания полей снаружи
+    src = read_source(_src(tmp_path))
+    data = build_matrix(src.records, _rules())
+    text, table = build_report(data)
+    assert "СМЕРТНОСТЬ" in text and "по датам выбытия" in text
+    assert table[0][:2] == ["Месяц", "Всего"] and table[-1][0] == "Итого"
+    assert "Смертность" in build_html(data)
 
 
 def test_run_deaths_outputs_xlsx(tmp_path):
@@ -104,3 +144,47 @@ def test_bad_source_raises(tmp_path):
     p.write_text("совсем не таблица", encoding="utf-8")
     with pytest.raises(JobError):
         run_deaths(str(p), console=False)
+
+
+# ----------------------------- диагностика пропущенного -----------------------------
+
+_BROKEN = _HEAD + "\n".join([
+    _data_row(1, "А", "Мужской", 70, _TERAPIYA, "02.01.2026", "05.01.2026", 3, "I25.5"),
+    # № ИБ буквенно-цифровой — запись отбрасывается, но не молча
+    _data_row("А-8", "З", "Женский", 90, _TERAPIYA, "04.01.2026", "07.01.2026", 3, "I21.0"),
+    # возраст не в годах
+    _data_row(2, "И", "Мужской", "7 мес.", _TERAPIYA, "05.01.2026", "09.01.2026", 4, "J18.9"),
+    # даты в чужом формате -> запись без даты выбытия
+    _data_row(3, "К", "Женский", 90, _TERAPIYA, "2026-01-08", "2026-01-09", 1, "I21.0"),
+]) + "\n</table></body></html>"
+
+
+def test_source_problems_are_collected(tmp_path):
+    src = read_source(_src(tmp_path, _BROKEN))
+    assert len(src.records) == 3                      # строка с № ИБ «А-8» отброшена
+    joined = " | ".join(src.problems)
+    assert "А-8" in joined and "нечисловым № ИБ" in joined
+    assert "2026-01-08" in joined and "ДД.ММ.ГГГГ" in joined
+
+
+def test_unparsed_age_is_counted(tmp_path):
+    src = read_source(_src(tmp_path, _BROKEN))
+    m = build_matrix(src.records, _rules(), period=src.period)
+    assert m.ages == [70]                             # «7 мес.» в годы не превращаем
+    assert m.age_unparsed["7 мес."] == 1
+    assert m.no_date == 1                             # запись с датами «2026-01-08» не учтена
+    assert m.grand_total == 2
+
+
+def test_run_deaths_logs_problems(tmp_path):
+    groups = tmp_path / "g.csv"
+    groups.write_text("код_от;код_до;группа;подгруппа\n"
+                      "I2O;I25;Болезни кровообращения;ИБС\n"
+                      "I00;I99;Болезни кровообращения;\n", encoding="utf-8")
+    res = run_deaths(str(_src(tmp_path, _BROKEN)), groups=str(groups), console=False)
+    journal = res["log_path"].read_text(encoding="utf-8")
+    assert "справочник групп" in journal and "I2O" in journal      # битое правило справочника
+    assert "нечисловым № ИБ" in journal                            # потерянная строка данных
+    assert "не разобрано дат" in journal                           # дата в чужом формате
+    assert "возраст не разобран" in journal                        # «7 мес.»
+    assert "коды МКБ вне справочника" in journal                   # J18.9 вне своего справочника

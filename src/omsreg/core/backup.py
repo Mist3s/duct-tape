@@ -21,6 +21,8 @@ import shutil
 from pathlib import Path
 from typing import Callable
 
+from omsreg.core.dbf import DbfTable
+
 # спутники, которые копируем в бэкап рядом с .dbf
 MEMO_SUFFIXES = (".fpt", ".dbt")
 INDEX_SUFFIXES = (".cdx", ".idx", ".ndx", ".mdx")
@@ -80,21 +82,27 @@ def save_and_verify(
     backup_dir: Path,
     log: logging.Logger,
 ) -> dict:
-    """Полный безопасный цикл упаковки одного файла:
+    """Полный безопасный цикл упаковки одного файла.
 
-    бэкап семейства -> атомарная запись survivors со сбросом флага индекса ->
+    Бэкап семейства -> атомарная запись survivors со сбросом флага индекса ->
     удаление устаревших индексов -> перечитывание и проверка, что искомых значений
     не осталось. Возвращает {backup, nrec_after, remaining, ok}.
 
+    table           — открытая DbfTable исходного файла (из неё берутся заголовок и записи);
+    kept            — записи, которые остаются в файле (survivors);
+    dbf_path        — файл, который перезаписываем;
     field           — имя поля, по которому проверяем отсутствие удалённого;
-    code_matches    — предикат code(int|None) -> bool «эта запись должна была уйти».
+    code_matches    — предикат code(int|None) -> bool «эта запись должна была уйти»;
+    backup_dir      — папка для резервной копии семейства файлов;
+    log             — журнал задачи (пишутся шаги копирования и самопроверки).
     """
     backup_path = backup_table_family(dbf_path, backup_dir, log)
 
     table.save(kept, dbf_path, clear_structural_index=True)
     _drop_stale_indexes(dbf_path, log)
 
-    check = table.__class__(dbf_path)
+    # перечитываем записанный файл с диска и убеждаемся, что удалённого в нём не осталось
+    check = DbfTable(dbf_path)
     chk_fld = check.field(field)
     remaining = sum(1 for rec in check.records if code_matches(check.code_value(rec, chk_fld)))
     ok = check.nrec == len(kept) and remaining == 0

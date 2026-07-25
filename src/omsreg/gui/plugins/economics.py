@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from omsreg.core import money
-from omsreg.gui.spec import ActionSpec, JobResult, ParamKind, ParamSpec, RunContext, UtilitySpec
+from omsreg.gui.plugin_fields import (
+    DAY_KOTD_DEFAULT,
+    day_kotd_param,
+    dbf_field_param,
+    kotd_names_param,
+    target_param,
+)
+from omsreg.gui.spec import ActionSpec, JobResult, ParamSpec, RunContext, UtilitySpec
+from omsreg.utils import parse_kotd_names
 from omsreg.utils import stat_economics as econ
-from omsreg.utils._shared import stat_common as common
 
 _EF = econ.ECON_FIELDS
 
@@ -13,8 +20,8 @@ _EF = econ.ECON_FIELDS
 def _run(ctx: RunContext) -> JobResult:
     p = ctx.params
     fields = {k: p[f"field_{k}"] for k in _EF if f"field_{k}" in p}
-    kotd_names = common.parse_kotd_names(p.get("kotd_names", ""))
-    res = econ.run_economics(p["target"], p["day_kotd"] or "10,15,12", fields, kotd_names,
+    kotd_names = parse_kotd_names(p.get("kotd_names", ""))
+    res = econ.run_economics(p["target"], p["day_kotd"] or DAY_KOTD_DEFAULT, fields, kotd_names,
                              extra_handlers=[ctx.log_handler], console=False)
     return JobResult(
         summary=(f"Готово. Случаев: {res['cases']}, оплачено {money(res['total'])} ₽, "
@@ -26,8 +33,7 @@ def _run(ctx: RunContext) -> JobResult:
 
 
 def _fld(key: str, label: str) -> ParamSpec:
-    return ParamSpec(f"field_{key}", label, ParamKind.TEXT, default=_EF[key],
-                     advanced=True, group="fields", width=12)
+    return dbf_field_param(f"field_{key}", label, _EF[key], width=12)
 
 
 SPEC = UtilitySpec(
@@ -40,16 +46,9 @@ SPEC = UtilitySpec(
         "топ КСГ. Оплата по КСГ: STOIM = БС × KOEF_Z × KOEF_UP × KOEF_PR. Сохраняется .txt и .html."
     ),
     params=(
-        ParamSpec("target", "DBF-файл или папка:", ParamKind.PATH, required=True,
-                  filetypes=(("DBF", "*.dbf"),),
-                  require_msg="Укажите DBF-файл или папку.", legacy_key="статистика_путь"),
-        ParamSpec("day_kotd", "Коды отделений ДС:", ParamKind.TEXT, default="10,15,12", width=18,
-                  hint="через запятую; остальные отделения — круглосуточный стационар",
-                  legacy_key="дневной_стационар_коды"),
-        ParamSpec("kotd_names", "Названия отделений:", ParamKind.TEXT, advanced=True,
-                  default=common.format_kotd_names(common.KOTD_NAMES),
-                  hint="формат: 23=Пульмонологическое; 27=Терапевтическое; 61=Неврологическое",
-                  legacy_key="названия_отделений"),
+        target_param(),
+        day_kotd_param(),
+        kotd_names_param(),
         _fld("stoim", "Стоимость (STOIM):"),
         _fld("fact", "Койко-дни (FACT):"),
         _fld("kotd", "Отделение (KOTD):"),

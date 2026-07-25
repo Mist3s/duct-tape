@@ -24,18 +24,25 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import datetime
+from functools import partial
 from pathlib import Path
 
-from omsreg.core import TALON_FIELD_DEFAULT, DbfTable, JobError, setup_job_logging
+from omsreg.core import TALON_FIELD_DEFAULT, DbfTable, JobError
 from omsreg.core.backup import save_and_verify
 from omsreg.core.cli import run_or_exit
 from omsreg.core.textio import extract_code_tokens, read_codes_file
 from omsreg.utils._shared.removal_common import (
+    STATUS_NO_FIELD,
+    STATUS_OK,
     add_dry_run_arg,
     add_field_arg,
+    file_result,
+    finish_removal,
+    job_summary,
     join_fio,
     log_summary_table,
+    process_files,
+    start_removal,
     warn_large_deletion,
 )
 
@@ -57,8 +64,8 @@ def process_dbf(dbf_path: Path, codes: set, field_name: str,
     fld = table.field(field_name)
     if fld is None:
         log.info("  поля %s нет — файл пропущен (записей: %d)", field_name, table.nrec)
-        return {"path": dbf_path, "before": table.nrec, "deleted": 0, "after": table.nrec,
-                "found": {}, "skipped": True, "error": False}
+        return file_result(dbf_path, STATUS_NO_FIELD, before=table.nrec, deleted=0,
+                           after=table.nrec)
 
     log.info("  формат 0x%02X, кодировка данных %s, записей: %d",
              table.version, table.codepage, table.nrec)
@@ -83,8 +90,8 @@ def process_dbf(dbf_path: Path, codes: set, field_name: str,
              dbf_path.name, table.nrec, len(deleted), len(found), len(kept))
     warn_large_deletion(dbf_path, len(deleted), table.nrec, log, "файл кодов и поле кода талона")
 
-    result = {"path": dbf_path, "before": table.nrec, "deleted": len(deleted),
-              "after": len(kept), "found": found, "skipped": False, "error": False}
+    result = file_result(dbf_path, STATUS_OK, before=table.nrec, deleted=len(deleted),
+                         after=len(kept), found=found)
 
     if not deleted:
         log.info("    изменений нет — файл не перезаписывается")
@@ -114,34 +121,16 @@ def resolve_codes_path(directory, codes_file) -> Path:
     raise JobError(f"Файл со списком кодов не найден: {codes_path}")
 
 
-def run_codes(directory, codes_file=None, field=TALON_FIELD_DEFAULT, dry_run=False,
-              min_len=MIN_CODE_LEN, max_len=MAX_CODE_LEN, codes_text=None,
-              extra_handlers=None, console=True) -> dict:
-    """Удаление записей со списком кодов из всех DBF папки. Возвращает словарь с итогами.
-    Источник кодов: непустой codes_text (вставленный/введённый список) имеет приоритет,
-    иначе читается файл codes_file. Должно быть задано что-то одно."""
-    directory = Path(directory)
-    if not directory.is_dir():
-        raise JobError(f"Папка не найдена: {directory}")
+def _read_codes(codes_text, codes_path: Path | None, min_len: int, max_len: int) -> set:
+    """ШАГ 1: читает список кодов из введённого текста (codes_path is None) или из файла.
 
-    use_text = bool(codes_text and codes_text.strip())
-    if not use_text and not codes_file:
-        raise JobError("Не указан ни файл со списком кодов, ни введённый список кодов.")
-    codes_path = None if use_text else resolve_codes_path(directory, codes_file)
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = directory / f"udalenie_kodov_{ts}.log"
-    setup_job_logging(log, log_path, extra_handlers, console)
-
-    log.info("=" * 78)
-    log.info("Запуск: папка %s%s", directory.resolve(), "  [РЕЖИМ ПРОВЕРКИ]" if dry_run else "")
-    log.info("Источник кодов: %s", "введённый список (вставлен в программе)"
-             if use_text else f"файл {codes_path.resolve()}")
-    log.info("Лог-файл: %s", log_path)
-
-    # -------- шаг 1: чтение списка кодов --------
+    Пишет в журнал источник, состав списка и пропущенные числа. Пустой список кодов —
+    ошибка задачи (JobError): удалять было бы нечего, а причина почти всегда в «не том
+    файле».
+    """
     log.info("=" * 78)
     log.info("ШАГ 1. Чтение списка кодов (принимаются числа длиной %d-%d цифр)", min_len, max_len)
+    use_text = codes_path is None
     try:
         if use_text:
             codes_list, too_long, too_short = extract_code_tokens(codes_text, min_len, max_len)
@@ -172,49 +161,35 @@ def run_codes(directory, codes_file=None, field=TALON_FIELD_DEFAULT, dry_run=Fal
     if len(too_long) + len(too_short) > len(codes_list):
         log.warning("  ВНИМАНИЕ: пропущенных чисел больше, чем принятых кодов — "
                     "убедитесь, что список кодов правильный!")
+    return codes
 
-    # -------- шаг 2: проход по всем DBF --------
-    dbf_files = sorted(
+
+def _find_dbf_files(directory: Path, codes_path: Path | None) -> list:
+    """Все *.dbf папки по алфавиту, кроме самого файла со списком кодов."""
+    return sorted(
         (p for p in directory.iterdir()
          if p.is_file() and p.suffix.lower() == ".dbf"
          and (codes_path is None or p.resolve() != codes_path.resolve())),
         key=lambda p: p.name.lower(),
     )
-    if not dbf_files:
-        msg = f"В папке {directory} не найдено ни одного файла *.dbf"
-        log.error(msg)
-        raise JobError(msg)
 
-    log.info("=" * 78)
-    log.info("ШАГ 2. Обработка DBF-файлов: найдено %d файла(ов)", len(dbf_files))
-    backup_dir = directory / f"backup_{ts}"
-    results = []
-    for dbf_path in dbf_files:
-        try:
-            results.append(process_dbf(dbf_path, codes, field, backup_dir, dry_run))
-        except (ValueError, OSError) as e:
-            log.error("  ОШИБКА обработки %s: %s (если файл был затронут — восстановите из %s)",
-                      dbf_path.name, e, backup_dir)
-            results.append({"path": dbf_path, "before": 0, "deleted": 0, "after": 0,
-                            "found": {}, "skipped": False, "error": True})
 
-    # -------- итоговая сводка --------
-    log.info("=" * 78)
-    log.info("ИТОГОВАЯ СВОДКА%s", " (режим проверки, файлы не изменялись)" if dry_run else "")
-    def _note(r):
-        if r["skipped"]:
-            return f"  (нет поля {field} — пропущен)"
-        return "  <-- ОШИБКА, файл не изменён корректно" if r["error"] else ""
+def _summary_note(field: str, r: dict) -> str:
+    """Пометка строки итоговой таблицы: пропуск из-за отсутствия поля либо ошибка."""
+    if r["status"] == STATUS_NO_FIELD:
+        return f"  (нет поля {field} — пропущен)"
+    return "  <-- ОШИБКА, файл не изменён корректно" if r["error"] else ""
 
-    log_summary_table(results, log, _note)
 
+def _log_code_report(results: list, codes: set, dry_run: bool) -> None:
+    """Сводка по кодам: где каждый код удалён и какие коды не найдены ни в одном файле."""
     log.info("-" * 78)
     log.info("Сводка по кодам:")
     verb = "будет удалено" if dry_run else "удалено"
     not_found_anywhere = []
     for code in sorted(codes):
         parts = [f"{r['path'].name}: {r['found'][code]}"
-                 for r in results if code in r.get("found", {})]
+                 for r in results if code in r["found"]]
         if parts:
             log.info("  %s  ->  %s: %s", code, verb, "; ".join(parts))
         else:
@@ -223,27 +198,65 @@ def run_codes(directory, codes_file=None, field=TALON_FIELD_DEFAULT, dry_run=Fal
         log.info("  коды, НЕ найденные НИ В ОДНОМ файле (%d): %s",
                  len(not_found_anywhere), ", ".join(str(c) for c in not_found_anywhere))
 
-    deleted_total = sum(r["deleted"] for r in results)
-    files_changed = sum(1 for r in results if r["deleted"] and not r["error"])
 
-    if results and all(r["skipped"] for r in results):
+def run_codes(directory, codes_file=None, field=TALON_FIELD_DEFAULT, dry_run=False,
+              min_len=MIN_CODE_LEN, max_len=MAX_CODE_LEN, codes_text=None,
+              extra_handlers=None, console=True) -> dict:
+    """Удаление записей со списком кодов из всех DBF папки.
+
+    Возвращает словарь с итогами (см. removal_common.finish_removal). Источник кодов:
+    непустой codes_text (вставленный/введённый список) имеет приоритет, иначе читается
+    файл codes_file. Должно быть задано что-то одно.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        raise JobError(f"Папка не найдена: {directory}")
+
+    use_text = bool(codes_text and codes_text.strip())
+    if not use_text and not codes_file:
+        raise JobError("Не указан ни файл со списком кодов, ни введённый список кодов.")
+    codes_path = None if use_text else resolve_codes_path(directory, codes_file)
+
+    ts, log_path = start_removal(log, directory, "udalenie_kodov", dry_run,
+                                 extra_handlers, console)
+    log.info("Источник кодов: %s", "введённый список (вставлен в программе)"
+             if use_text else f"файл {codes_path.resolve()}")
+    log.info("Лог-файл: %s", log_path)
+
+    # -------- шаг 1: чтение списка кодов --------
+    codes = _read_codes(codes_text, codes_path, min_len, max_len)
+
+    # -------- шаг 2: проход по всем DBF --------
+    dbf_files = _find_dbf_files(directory, codes_path)
+    if not dbf_files:
+        msg = f"В папке {directory} не найдено ни одного файла *.dbf"
+        log.error(msg)
+        raise JobError(msg)
+
+    log.info("=" * 78)
+    log.info("ШАГ 2. Обработка DBF-файлов: найдено %d файла(ов)", len(dbf_files))
+    backup_dir = directory / f"backup_{ts}"
+    results = process_files(
+        ((p, codes) for p in dbf_files),
+        partial(process_dbf, field_name=field, backup_dir=backup_dir, dry_run=dry_run),
+        log, backup_dir,
+    )
+
+    # -------- итоговая сводка --------
+    log.info("=" * 78)
+    log.info("ИТОГОВАЯ СВОДКА%s", " (режим проверки, файлы не изменялись)" if dry_run else "")
+    log_summary_table(results, log, partial(_summary_note, field))
+    _log_code_report(results, codes, dry_run)
+
+    if results and all(r["status"] == STATUS_NO_FIELD for r in results):
         msg = f"НИ В ОДНОМ DBF-файле нет поля {field} — проверьте имя поля. Ничего не удалено."
         log.error(msg)
-        return {"had_error": True, "log_path": log_path, "deleted_total": 0,
-                "files_changed": 0, "dry_run": dry_run}
+        return job_summary(log_path, dry_run, had_error=True)
 
-    errors = [r for r in results if r["error"]]
-    if errors:
-        log.error("Завершено с ошибками в %d файле(ах) — см. лог выше!", len(errors))
-    if not dry_run:
-        log.info("Резервные копии изменённых файлов: %s",
-                 backup_dir if backup_dir.exists() else "не потребовались")
-    log.info("Готово. Полный лог: %s", log_path)
-    return {"had_error": bool(errors), "log_path": log_path, "deleted_total": deleted_total,
-            "files_changed": files_changed, "dry_run": dry_run}
+    return finish_removal(results, log, log_path, backup_dir, dry_run)
 
 
-def main() -> None:
+def main() -> None:  # noqa: D103 - назначение утилиты в ArgumentParser(description=...), попадает в --help
     parser = argparse.ArgumentParser(
         description="Удаление записей с заданными кодами талонов из ВСЕХ DBF-файлов папки.")
     parser.add_argument("directory", help="папка с DBF-файлами")

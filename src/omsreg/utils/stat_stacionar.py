@@ -12,7 +12,8 @@
       statistika_<имя>_<дата_время>.html  — наглядный отчёт для браузера.
  4. Прогресс пишется в общий журнал (консоль/GUI) и в statistika_<...>.log.
 
-Сбор данных и запуск — здесь; построение отчётов — в stat.stacionar_report.
+Сбор данных и запуск — здесь; построение отчётов — в
+omsreg.utils._shared.stat_stacionar_report.
 
 Примеры запуска:
     omsreg-stat uu/0091_016.dbf
@@ -29,6 +30,8 @@ from datetime import datetime
 from omsreg.core import DbfTable, JobError, as_float, as_int, resolve_dbf_path, setup_job_logging
 from omsreg.core.cli import run_or_exit
 from omsreg.utils._shared.stat_common import (
+    DAY_KOTD_DEFAULT,
+    Case,
     add_kotd_args,
     classify_type,
     normalize_fields,
@@ -45,8 +48,11 @@ log = logging.getLogger("omsreg.utils.stat_stacionar")
 
 
 def collect(table: DbfTable, day_kotd, fields=None):
-    """Возвращает (список случаев, число исключённых удалённых, есть_ли_FACT).
-    Случай: (тип_стационара, kotd, kmkb, ishod, stoim, fact)."""
+    """Читает случаи из DBF.
+
+    Возвращает (список Case, число исключённых удалённых записей, есть_ли_FACT);
+    состав полей случая — в omsreg.utils._shared.stat_common.Case.
+    """
     f = normalize_fields(DEFAULT_FIELDS, fields)
     for key in ("kotd", "kmkb", "stoim", "ishod"):
         if not table.has_field(f[key]):
@@ -65,16 +71,18 @@ def collect(table: DbfTable, day_kotd, fields=None):
         ishod = as_int(table.value(rec, f["ishod"]))
         fact = as_float(table.value(rec, f["fact"])) if has_fact else None
         st_type = classify_type(kotd, day_kotd)
-        cases.append((st_type, kotd, kmkb, ishod, stoim, fact))
+        cases.append(Case(st_type, kotd, kmkb, ishod, stoim, fact))
     return cases, deleted, has_fact
 
 
-def run_stat(target, day_kotd="10,15,12", fields=None, kotd_names=None,
+def run_stat(target, day_kotd=DAY_KOTD_DEFAULT, fields=None, kotd_names=None,
              extra_handlers=None, console=True) -> dict:
     """Строит статистику стационара и сохраняет .txt/.csv/.html рядом с DBF.
+
     kotd_names — словарь названий отделений {код: название}; None -> встроенный KOTD_NAMES.
     Прогресс идёт в общий журнал. Возвращает
-    {text, txt_path, csv_path, html_path, log_path, cases}. Фатальные ошибки -> JobError."""
+    {text, txt_path, csv_path, html_path, log_path, cases}. Фатальные ошибки -> JobError.
+    """
     path = resolve_dbf_path(target)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     base = path.parent / f"statistika_{path.stem}_{ts}"
@@ -102,7 +110,7 @@ def run_stat(target, day_kotd="10,15,12", fields=None, kotd_names=None,
     csv_path = base.with_suffix(".csv")
     html_path = base.with_suffix(".html")
     txt_path.write_text(text + "\n", encoding="utf-8")
-    with open(csv_path, "w", encoding="utf-8-sig", newline="") as f:
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as f:
         for row in csv_rows:
             f.write(";".join(str(x) for x in row) + "\n")
     log.info("Строю HTML-отчёт…")
@@ -115,7 +123,7 @@ def run_stat(target, day_kotd="10,15,12", fields=None, kotd_names=None,
             "html_path": html_path, "log_path": log_path, "cases": len(cases)}
 
 
-def main() -> None:
+def main() -> None:  # noqa: D103 - назначение утилиты в ArgumentParser(description=...), попадает в --help
     parser = argparse.ArgumentParser(
         description="Статистика по DBF стационара: дневной/круглосуточный -> МКБ -> исходы.")
     parser.add_argument("dbf", help="DBF-файл (например uu/0091_016.dbf) или папка с одним DBF")

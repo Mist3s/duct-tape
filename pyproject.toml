@@ -24,7 +24,8 @@ classifiers = [
 dependencies = []  # чистая стандартная библиотека; tkinter поставляется вместе с CPython
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "ruff>=0.4"]
+# ruff>=0.14: конфиг опирается на preview-правила (E301-E306, PLC0415, C420)
+dev = ["pytest>=7", "ruff>=0.14"]
 build = ["pyinstaller>=6"]
 
 [project.urls]
@@ -57,7 +58,68 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 110
 target-version = "py39"
+preview = true  # без этого недоступны E301–E306
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B"]
-ignore = ["E501"]  # длинные строки в форматировании отчётов допустимы
+select = [
+    "E", "F", "W", "I", "UP", "B",
+    "N",        # именование
+    "D",        # докстринги (PEP 257)
+    "ARG",      # неиспользуемые параметры
+    "SIM",      # упрощения
+    "RET", "C4", "PERF",
+    "PLC0415",  # импорты не на уровне модуля
+    "RUF100",   # устаревшие noqa — чтобы точечные заглушки не жили после исправления
+    "PTH",      # один способ работы с путями на весь пакет — pathlib
+    "C90",      # цикломатическая сложность (порог см. [tool.ruff.lint.mccabe])
+    "PLR0912", "PLR0915", "PLR0913",  # ветвлений / инструкций / аргументов
+    # PLR2004 (магические значения) НЕ включено: 55 срабатываний, почти все —
+    # ширины полей в форматировании отчётов и сравнения в assert'ах тестов.
+]
+ignore = [
+    "E501",     # длинные строки в форматировании отчётов допустимы
+    "D401",     # imperative mood — ложные срабатывания на русских докстрингах
+    "D203",     # взаимоисключающее с D211; берём D211
+    "D213",     # взаимоисключающее с D212; берём D212
+    "D105",     # докстринги magic-методов
+    "D107",     # __init__ — контракт описан в докстринге класса
+    "PERF203",  # try/except в цикле — сознательно: сбой на одном файле не рвёт обход
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+# тесты: имена test_* самодокументируемы
+"tests/*" = ["D100", "D103"]
+# автогенерированный файл данных — стиль правится в tools/build_ksg_catalog.py
+"src/omsreg/utils/_shared/ksg_catalog.py" = ["D", "E", "W"]
+# диспетчер подкоманд: импорт утилиты отложен намеренно, чтобы CLI не тянул
+# tkinter и неиспользуемые утилиты при каждом запуске
+"src/omsreg/cli.py" = ["PLC0415"]
+# отложенный импорт обходит реальный цикл stat_economics <-> stat_economics_report;
+# PLR0913 — run_econ: 6 аргументов (ВРЕМЕННО, см. блок технического долга ниже)
+"src/omsreg/utils/stat_economics.py" = ["PLC0415", "PLR0913"]
+# модуль-описание интерфейса: датаклассы документированы построчными
+# комментариями к полям, докстринг класса дублировал бы их
+"src/omsreg/gui/spec.py" = ["D101"]
+
+# --- ВРЕМЕННО, технический долг: снимать по мере разрезания функций ---
+# _load_config: сложность 11 (порог 10); _build_tab: 54 инструкции (порог 50)
+"src/omsreg/gui/app.py" = ["C901", "PLR0915"]
+# build_report: 61 инструкция (порог 50)
+"src/omsreg/utils/_shared/stat_deaths_report.py" = ["PLR0915"]
+
+# --- ВРЕМЕННО, технический долг: PLR0913 (аргументов > 5) ---
+# Это функции, чьи параметры один в один повторяют флаги CLI и поля настроек GUI:
+# сворачивание их в объект-настройки — отдельный рефакторинг, аудит его не требовал.
+"src/omsreg/core/backup.py" = ["PLR0913"]                        # pack_and_verify: 7
+"src/omsreg/core/xlsx.py" = ["PLR0913"]                          # write_xlsx: 7
+"src/omsreg/utils/_shared/removal_common.py" = ["PLR0913"]       # 7 и 6
+"src/omsreg/utils/_shared/stat_stacionar_report.py" = ["PLR0913"]  # 7 и 7
+"src/omsreg/utils/remove_codes.py" = ["PLR0913"]                 # run_codes: 9
+"src/omsreg/utils/remove_error_talons.py" = ["PLR0913"]          # run_talons: 6
+"src/omsreg/utils/stat_stacionar.py" = ["PLR0913"]               # run_stat: 6

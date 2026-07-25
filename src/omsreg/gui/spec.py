@@ -15,6 +15,19 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+class BoxKind(Enum):
+    """Вид итогового окна с сообщением (messagebox) — перечислением, а не строкой.
+
+    Со строкой опечатка («eror») молча превращала окно об ошибке в спокойное
+    информационное: приложение брало обработчик через dict.get с показом info
+    по умолчанию.
+    """
+
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+
+
 class ParamKind(Enum):
     DIR = "dir"           # папка   -> поле ввода + «Обзор…» (askdirectory)
     FILE = "file"         # файл    -> поле ввода + «Обзор…» (askopenfilename)
@@ -45,6 +58,7 @@ class ParamSpec:
     legacy_key: str | None = None           # старый ключ из настройки.txt (миграция)
 
     def config_key(self, util_id: str) -> str:
+        """Ключ параметра в файле настроек: «<id утилиты>.<ключ параметра>»."""
         return f"{util_id}.{self.key}"
 
 
@@ -70,11 +84,19 @@ class JobResult:
     log_text: str = ""                         # необяз. крупный текст в журнал (отчёт stat)
     had_error: bool = False
     open_path: Path | None = None           # файл, который предложить открыть (HTML/лог)
-    box_kind: str = "info"                     # info | warning | error
+    box_kind: BoxKind = BoxKind.INFO            # вид итогового окна с сообщением
 
 
 @dataclass(frozen=True)
 class UtilitySpec:
+    """Описание одной утилиты — то, что плагин объявляет объектом SPEC.
+
+    Приложение (omsreg.gui.app) строит по нему вкладку: заголовок и описание,
+    поля из params, кнопки из actions, кросс-проверку validate перед запуском и
+    окно подтверждения confirm_message для разрушающих действий. Сама работа —
+    в run(RunContext) -> JobResult; ни одной строки Tkinter в плагине нет.
+    """
+
     id: str                                     # стабильный id: namespace настроек + id вкладки
     title: str                                  # заголовок вкладки
     description: str                            # абзац-подсказка вверху вкладки

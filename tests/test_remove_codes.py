@@ -79,3 +79,24 @@ def test_all_files_missing_field_reports_error(make_dbf, tmp_path):
     res = run_codes(str(tmp_path), "codes.txt", console=False)
     assert res["had_error"] is True
     assert res["deleted_total"] == 0
+
+
+def test_broken_file_reported_as_unknown_with_traceback(make_dbf, registry_fields, tmp_path):
+    """Сбой на одном файле: в сводке «неизвестно» вместо нулей, в журнале — трассировка."""
+    a = make_dbf(tmp_path / "a.dbf", registry_fields, _rows(["111111", "222222"]))
+    (tmp_path / "b.dbf").write_bytes(b"\x03" + b"\x00" * 20)  # заголовок короче 33 байт
+    (tmp_path / "codes.txt").write_text("111111\n", encoding="utf-8")
+
+    res = run_codes(str(tmp_path), "codes.txt", console=False)
+
+    assert res["had_error"] is True
+    assert res["deleted_total"] == 1          # исправный файл обработан, его статистика реальная
+    assert res["files_changed"] == 1
+    ta = DbfTable(a)
+    assert sorted(ta.code_value(r, "KOD_TALON") for r in ta.records) == [222222]
+
+    text = res["log_path"].read_text(encoding="utf-8")
+    row = next(ln for ln in text.splitlines() if "b.dbf" in ln and "ОШИБКА, файл не изменён" in ln)
+    assert row.count("неизвестно") == 3       # было/удалено/стало не подделываются нулями
+    assert "Traceback (most recent call last)" in text   # первопричина сбоя — в журнале задачи
+    assert "файл слишком мал для DBF" in text

@@ -15,11 +15,33 @@ import zipfile
 from pathlib import Path
 from xml.sax.saxutils import escape
 
-# индексы стилей ячеек (s у <c>), см. cellXfs в _STYLES ниже:
-# 0 слева · 1 шапка (жирная, по центру, перенос) · 2 жирная слева · 3 по центру ·
-# 4 справа · 5 жирная по центру · 6 жирная справа
+
+def _xf(align: str, *, bold: bool = False, wrap: bool = False) -> str:
+    """Описание одного стиля ячейки (<xf> в cellXfs): шрифт, тонкая рамка, выравнивание."""
+    font = ' applyFont="1"' if bold else ""
+    wrap_attr = ' wrapText="1"' if wrap else ""
+    return (
+        f'<xf numFmtId="0" fontId="{1 if bold else 0}" fillId="0" borderId="1" xfId="0"'
+        f'{font} applyBorder="1" applyAlignment="1">'
+        f'<alignment horizontal="{align}" vertical="center"{wrap_attr}/></xf>'
+    )
+
+
+# Стили ячеек в порядке, в котором Excel нумерует их атрибутом s у <c>. Индексы ниже
+# (STYLE_HEADER, _DATA_STYLE) — позиции в этом кортеже, а count в cellXfs считается из
+# его длины: рассинхронизация «объявил семь, написал count=6» стала невозможна.
+_CELL_XFS = (
+    _xf("left"),                          # 0 обычная слева
+    _xf("center", bold=True, wrap=True),  # 1 шапка: жирная, по центру, с переносом
+    _xf("left", bold=True),               # 2 жирная слева
+    _xf("center"),                        # 3 по центру
+    _xf("right"),                         # 4 справа
+    _xf("center", bold=True),             # 5 жирная по центру
+    _xf("right", bold=True),              # 6 жирная справа
+)
+
 STYLE_HEADER = 1
-# (выравнивание, жирный) -> индекс стиля данных
+# (выравнивание, жирный) -> индекс стиля данных в _CELL_XFS
 _DATA_STYLE = {("left", False): 0, ("left", True): 2, ("center", False): 3,
                ("center", True): 5, ("right", False): 4, ("right", True): 6}
 
@@ -58,22 +80,7 @@ _STYLES = (
     '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'
     '<border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/><diagonal/></border></borders>'
     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
-    '<cellXfs count="7">'
-    # 0 обычная слева
-    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>'
-    # 1 шапка: жирная, по центру, перенос
-    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'
-    # 2 жирная слева
-    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="left" vertical="center"/></xf>'
-    # 3 по центру
-    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
-    # 4 справа
-    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>'
-    # 5 жирная по центру
-    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'
-    # 6 жирная справа
-    '<xf numFmtId="0" fontId="1" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="right" vertical="center"/></xf>'
-    '</cellXfs>'
+    f'<cellXfs count="{len(_CELL_XFS)}">' + "".join(_CELL_XFS) + '</cellXfs>'
     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
     '</styleSheet>'
 )
@@ -99,9 +106,13 @@ def _cell_xml(col: int, rownum: int, value, style: int) -> str:
 
 def write_xlsx(path, sheet_name: str, rows, *, col_widths=None, col_align=None,
                header_rows: int = 1, bold_last_row: bool = False) -> None:
-    """Пишет одну таблицу в .xlsx.
+    r"""Пишет одну таблицу в .xlsx (перезаписывая файл целиком).
 
-    rows          — список списков ячеек (int/float -> число, иначе строка);
+    path          — куда записать книгу;
+    sheet_name    — имя листа. Excel требует не длиннее 31 символа и без символов
+                    []:*?/\ — вызывающий передаёт заведомо подходящее имя, проверки нет;
+    rows          — список списков ячеек: int/float пишется числом, bool и остальное —
+                    текстом (bool даёт латинские «True»/«False»), None недопустим;
     col_widths    — {индекс столбца (с 0): ширина} для нужных столбцов (остальные — по умолчанию);
     col_align     — {индекс столбца: 'left'|'center'|'right'} выравнивание ячеек ДАННЫХ;
                     по умолчанию число — вправо, строка — влево;

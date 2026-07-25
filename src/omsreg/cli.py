@@ -20,6 +20,11 @@ USAGE = __doc__
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Разбирает первый аргумент как подкоманду и передаёт остальное её точке входа.
+
+    Без аргументов (или с `gui`) запускает графический интерфейс. Импорт
+    подкоманды отложен: CLI не должен тянуть tkinter и чужие утилиты.
+    """
     argv = list(sys.argv[1:] if argv is None else argv)
 
     if not argv or argv[0] == "gui":

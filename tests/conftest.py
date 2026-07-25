@@ -57,9 +57,11 @@ REGISTRY_FIELDS = [
 
 @pytest.fixture
 def make_dbf():
+    """Функция build_dbf: build_dbf(path, fields, rows, *, ldid, deleted) -> Path."""
     return build_dbf
 
 
 @pytest.fixture
 def registry_fields():
+    """Копия стандартного набора полей реестра — список (имя, длина), можно править на месте."""
     return list(REGISTRY_FIELDS)

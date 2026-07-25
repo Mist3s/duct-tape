@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 import sys
@@ -16,10 +17,16 @@ class QueueLogHandler(logging.Handler):
         self.q = q
 
     def emit(self, record: logging.LogRecord) -> None:
+        """Кладёт отформатированную строку в очередь GUI.
+
+        Сбой (например, ошибка форматирования сообщения) не глушится: журнал —
+        единственный протокол разрушающих утилит, поэтому вызывается штатный
+        Handler.handleError, который печатает трассировку в stderr.
+        """
         try:
             self.q.put(("log", self.format(record)))
         except Exception:
-            pass
+            self.handleError(record)
 
 
 def setup_job_logging(
@@ -35,10 +42,10 @@ def setup_job_logging(
     """
     for h in list(logger.handlers):
         logger.removeHandler(h)
-        try:
+        # Обработчик уже снят с логгера, и сообщить о сбое его закрытия некуда:
+        # логгер как раз перенастраивается. Гасим осознанно и только здесь.
+        with contextlib.suppress(Exception):
             h.close()
-        except Exception:
-            pass
     logger.setLevel(logging.INFO)
     logger.propagate = False
     fmt = logging.Formatter("%(asctime)s  %(levelname)-7s %(message)s", "%H:%M:%S")
