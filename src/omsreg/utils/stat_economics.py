@@ -41,6 +41,8 @@ from omsreg.utils._shared.stat_common import (
     ROUND_TYPE,
     add_kotd_args,
     classify_type,
+    ksg_profile,
+    ksg_title,
     normalize_fields,
     parse_day_kotd,
     resolve_kotd_names,
@@ -253,6 +255,7 @@ def ksg_rows(cases):
         fts = [full_payment(c["stoim"], c["kpr"]) for c in cs if c["stoim"] and c["kpr"]]
         rows.append({
             "g": g, "type": Counter(c["type"] for c in cs).most_common(1)[0][0],
+            "title": ksg_title(g), "profile": ksg_profile(g),  # наименование/профиль из справочника КСГ
             "n": len(cs), "sum": s,
             "per_day": _per_day(s, cs),
             "kz": kzs[0] if len(kzs) == 1 else None,   # None, если у группы разные веса (диапазон)

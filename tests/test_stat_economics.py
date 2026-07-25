@@ -44,11 +44,16 @@ def test_economics_report(make_dbf, tmp_path):
     assert "st… (круглосуточные КСГ)" in txt            # базовая ставка подписана кодом КСГ, не «дневной»
     assert "не «уровень отделения»" in txt              # честная трактовка KOEF_UP
     assert "уровня отделения" not in txt                # прежняя ложная формулировка убрана
+    assert "наименование КСГ" in txt                    # колонка наименования из справочника КСГ
+    assert "Гипертоническая болезнь" in txt             # наименование st27.005 (в txt длинное обрезается)
     assert res["html_path"].exists()
     html = res["html_path"].read_text(encoding="utf-8")
     assert "Экономика" in html
     assert "Как формируется оплата случая" in html
     assert "попр. коэф." in html
+    # длинное наименование КСГ обрезается по ширине, полное — во всплывающей подсказке (title)
+    assert 'class="ksg-name"' in html
+    assert 'title="Гипертоническая болезнь в стадии обострения"' in html
 
 
 def test_base_rate_and_koef_helpers():

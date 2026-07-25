@@ -1,13 +1,14 @@
 """Общий словарь домена «стационар» для отчётных утилит stacionar и economics.
 
-Справочники (типы стационара, исходы, названия отделений), классификация случая по
-отделению, разбор связанных настроек и повторяющиеся аргументы командной строки.
-Импортирует только omsreg.core, tkinter не тянет.
+Справочники (типы стационара, исходы, названия отделений, наименования групп КСГ),
+классификация случая по отделению, разбор связанных настроек и повторяющиеся
+аргументы командной строки. Тянет только omsreg.core и данные ksg_catalog, tkinter нет.
 """
 
 from __future__ import annotations
 
 from omsreg.core import JobError
+from omsreg.utils._shared.ksg_catalog import KSG
 
 # коды исходов -> человекочитаемое название
 ISHOD_NAMES = {
@@ -93,6 +94,24 @@ def kotd_name(code, names=None) -> str:
         return "?"
     name = (KOTD_NAMES if names is None else names).get(code)
     return f"{code} — {name}" if name else str(code)
+
+
+def _ksg_lookup(code) -> tuple[str, str]:
+    """(наименование, профиль) группы КСГ по коду; ('', '') для пустого/неизвестного."""
+    if not code:
+        return "", ""
+    return KSG.get(str(code).strip().lower(), ("", ""))
+
+
+def ksg_title(code) -> str:
+    """Официальное наименование группы КСГ ('st05.001' -> 'Анемии (уровень 1)').
+    Пустая строка, если код не из справочника (новый/неизвестный) или не задан."""
+    return _ksg_lookup(code)[0]
+
+
+def ksg_profile(code) -> str:
+    """Профиль медпомощи группы КСГ ('st05.001' -> 'Гематология'); '' если неизвестен."""
+    return _ksg_lookup(code)[1]
 
 
 # --- повторяющиеся аргументы командной строки ---

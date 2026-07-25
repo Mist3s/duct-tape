@@ -20,6 +20,7 @@ echo [2/2] Сборка (займёт 1-2 минуты)...
   --name duct-tape --paths src ^
   --icon src\omsreg\gui\assets\icon.ico ^
   --add-data "src\omsreg\gui\assets\icon.png;omsreg\gui\assets" ^
+  --add-data "src\omsreg\utils\_shared\mkb_death_groups.csv;omsreg\utils\_shared" ^
   --collect-submodules omsreg.gui.plugins ^
   src\omsreg\__main__.py
 if errorlevel 1 goto err

@@ -38,12 +38,14 @@ omsreg-remove-talons = "omsreg.utils.remove_error_talons:main"
 omsreg-remove-codes = "omsreg.utils.remove_codes:main"
 omsreg-stat = "omsreg.utils.stat_stacionar:main"
 omsreg-econ = "omsreg.utils.stat_economics:main"
+omsreg-deaths = "omsreg.utils.stat_deaths:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 "omsreg.gui" = ["assets/*.png", "assets/*.ico"]
+"omsreg.utils._shared" = ["mkb_death_groups.csv"]
 
 [tool.setuptools.dynamic]
 version = { attr = "omsreg.__version__" }

@@ -49,7 +49,16 @@ _ECON_CSS = (
     ".bad { color:var(--bad); } .good { color:var(--good); } .warn { color:var(--warn); }\n"
     ".dx { color:var(--ink2); font-size:13px; }\n"
     ".barwrap { min-width:110px; }\n"
+    # длинные наименования/профиль КСГ: обрезаем многоточием, полный текст — в подсказке (title)
+    ".ksg-name, .ksg-prof { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:help; }\n"
+    ".ksg-name { max-width:320px; } .ksg-prof { max-width:150px; }\n"
 )
+
+
+def _trunc(s: str, n: int) -> str:
+    """Обрезает строку до n символов с многоточием (для колонок фикс. ширины в txt)."""
+    s = s or ""
+    return s if len(s) <= n else s[: n - 1] + "…"
 
 
 def build_report(dbf_path, cases, deleted, day_kotd, avail, names=None):
@@ -236,7 +245,8 @@ def build_report(dbf_path, cases, deleted, day_kotd, avail, names=None):
     if has_g:
         w("")
         w("КСГ: ЧТО ЭТО ЗА ГРУППЫ И СКОЛЬКО ПРИНОСЯТ (по типам стационара, топ по обороту)")
-        w("  Группа поясняется реальными диагнозами (коды МКБ) и главой МКБ из этого файла.")
+        w("  Группа подписана официальным наименованием и профилем из справочника КСГ, плюс реальные")
+        w("  диагнозы (коды МКБ) из этого файла.")
         w("  «вес КСГ» и «попр.коэф.» — множители группы (см. блок выше); «тариф полн.» = оплата за")
         w("  полностью пролеченный случай (базовая ставка × вес × попр.коэф.); «мин.полн.день» =")
         w("  минимальная длительность, при которой была полная оплата («—» — полных случаев нет).")
@@ -246,14 +256,15 @@ def build_report(dbf_path, cases, deleted, day_kotd, avail, names=None):
                 continue
             w("")
             w(f"  {st}:")
-            w(f"    {'КСГ':<12}{'случаев':>8}{'вес КСГ':>9}{'попр.коэф.':>11}{'тариф полн.':>14}"
-              f"{'мин.полн.день':>14}  диагнозы (МКБ) — глава")
+            w(f"    {'КСГ':<11}{'наименование КСГ':<34}{'профиль':<18}{'случаев':>8}{'вес КСГ':>9}"
+              f"{'попр.коэф.':>11}{'тариф полн.':>14}{'мин.полн.день':>14}  диагнозы (МКБ)")
             for k in st_ksg:
-                tail = f" — {k['chapter']}" if k["chapter"] else ""
+                name = _trunc(k["title"] or k["chapter"], 33)
+                prof = _trunc(k["profile"], 17)
                 mfd = f"{k['min_full_day']:.0f}" if k["min_full_day"] is not None else "—"
-                w(f"    {k['g']:<12}{k['n']:>8}{coef_str(k['kz'], k['kz_range']):>9}"
+                w(f"    {k['g']:<11}{name:<34}{prof:<18}{k['n']:>8}{coef_str(k['kz'], k['kz_range']):>9}"
                   f"{coef_str(k['kup'], k['kup_range']):>11}{m(k['full_tariff']):>14}"
-                  f"{mfd:>14}  {dx_examples(k['dx'], 2)}{tail}")
+                  f"{mfd:>14}  {dx_examples(k['dx'], 2)}")
 
     # ---------- методика ----------
     w("")
@@ -477,22 +488,27 @@ def build_html(dbf_path, cases, deleted, avail, names=None) -> str:
     # ---------- КСГ (по типам стационара) ----------
     if has_g:
         p('<h2>КСГ: что это за группы и сколько приносят</h2>'
-          '<p class="note">По типам стационара, топ по обороту. Группа поясняется реальными диагнозами '
-          '(МКБ) и главой МКБ из этого файла. «вес КСГ» и «попр. коэф.» — множители группы (см. блок '
-          'выше); «тариф полн. случая» = оплата за полностью пролеченный случай; «мин. полный день» = '
-          'минимальная длительность, при которой была полная оплата. «—» — полных случаев в группе нет.</p>')
+          '<p class="note">По типам стационара, топ по обороту. Группа подписана официальным '
+          'наименованием и профилем из справочника КСГ (полное название — во всплывающей подсказке '
+          'при наведении) и реальными диагнозами (МКБ) из этого файла. «вес КСГ» и «попр. коэф.» — '
+          'множители группы (см. блок выше); «тариф полн. случая» = оплата за полностью пролеченный '
+          'случай; «мин. полный день» = минимальная длительность, при которой была полная оплата. '
+          '«—» — полных случаев в группе нет.</p>')
         for st in (ROUND_TYPE, DAY_TYPE):
             st_ksg = sorted([k for k in krows if k["type"] == st], key=lambda k: -k["sum"])[:12]
             if not st_ksg:
                 continue
             p(f'<h3 style="font-size:15px;margin:10px 0 4px">{e(st)}</h3>'
-              '<table><thead><tr><th>КСГ</th><th>глава МКБ</th><th class="num">случаев</th>'
-              '<th class="num">вес КСГ</th><th class="num">попр. коэф.</th>'
+              '<table><thead><tr><th>КСГ</th><th>наименование</th><th>профиль</th>'
+              '<th class="num">случаев</th><th class="num">вес КСГ</th><th class="num">попр. коэф.</th>'
               '<th class="num">тариф полн. случая, ₽</th><th class="num">мин. полный день</th>'
               '<th>диагнозы (примеры)</th></tr></thead><tbody>')
             for k in st_ksg:
                 mfd = f"{k['min_full_day']:.0f}" if k["min_full_day"] is not None else "—"
-                p(f'<tr><td><b>{e(k["g"])}</b></td><td>{e(k["chapter"])}</td>'
+                name = k["title"] or k["chapter"]
+                p(f'<tr><td><b>{e(k["g"])}</b></td>'
+                  f'<td class="ksg-name" title="{e(name)}">{e(name)}</td>'
+                  f'<td class="ksg-prof" title="{e(k["profile"])}">{e(k["profile"])}</td>'
                   f'<td class="num">{k["n"]}</td><td class="num">{e(coef_str(k["kz"], k["kz_range"]))}</td>'
                   f'<td class="num">{e(coef_str(k["kup"], k["kup_range"]))}</td>'
                   f'<td class="num">{m(k["full_tariff"])}</td><td class="num">{mfd}</td>'

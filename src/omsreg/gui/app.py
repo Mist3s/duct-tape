@@ -271,8 +271,11 @@ class App(tk.Tk):
         var = tab.make_var(p)
         tab.vars[p.key] = var
         pady = (10, 0)
-        ttk.Label(page, text=p.label, style="Field.TLabel").grid(
-            row=row, column=0, sticky="w", padx=(0, 12), pady=pady)
+        # у флажка подпись на самом Checkbutton и он тянется на всю строку — иначе длинная
+        # подпись в колонке 0 расширяет её и перекашивает все поля вкладки
+        if p.kind is not ParamKind.BOOL:
+            ttk.Label(page, text=p.label, style="Field.TLabel").grid(
+                row=row, column=0, sticky="w", padx=(0, 12), pady=pady)
 
         if p.kind in (ParamKind.DIR, ParamKind.FILE, ParamKind.PATH):
             ttk.Entry(page, textvariable=var, font=UI_FONT).grid(
@@ -298,7 +301,8 @@ class App(tk.Tk):
             ttk.Spinbox(page, from_=p.min, to=p.max, width=p.width or 6,
                         textvariable=var).grid(row=row, column=1, sticky="w", pady=pady)
         elif p.kind is ParamKind.BOOL:
-            ttk.Checkbutton(page, variable=var).grid(row=row, column=1, sticky="w", pady=pady)
+            ttk.Checkbutton(page, text=p.label, variable=var).grid(
+                row=row, column=0, columnspan=3, sticky="w", pady=pady)
         else:  # TEXT
             entry = ttk.Entry(page, textvariable=var, font=UI_FONT,
                               **({"width": p.width} if p.width else {}))

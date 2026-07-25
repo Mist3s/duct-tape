@@ -46,23 +46,41 @@ def build_styles(root: tk.Misc) -> None:
     st.configure("TEntry", fieldbackground="white", bordercolor=C_BORDER, padding=4)
     st.configure("TSpinbox", fieldbackground="white", padding=3)
     st.configure("TSeparator", background=C_BORDER)
+    st.configure(
+        "TCheckbutton", background=C_CARD, foreground=C_INK, font=UI_FONT,
+        focuscolor=C_CARD, indicatorbackground="white", bordercolor=C_BORDER
+    )
+    st.map(
+        "TCheckbutton", background=[("active", C_CARD)],
+        indicatorbackground=[("selected", C_ACCENT), ("active", "white")]
+    )
 
     # плоские аккуратные полосы прокрутки (светлая — для меню, тёмная — для журнала)
-    st.configure("TScrollbar", troughcolor=C_BG, background="#c3cad6",
-                 bordercolor=C_BG, arrowcolor=C_INK2, relief="flat", borderwidth=0)
+    st.configure(
+        "TScrollbar", troughcolor=C_BG, background="#c3cad6",
+        bordercolor=C_BG, arrowcolor=C_INK2, relief="flat", borderwidth=0
+    )
     st.map("TScrollbar", background=[("active", "#aab2c0")])
-    st.configure("Log.Vertical.TScrollbar", troughcolor=C_LOG_BG, background="#39414f",
-                 bordercolor=C_LOG_BG, arrowcolor=C_LOG_FG, relief="flat", borderwidth=0)
+    st.configure(
+        "Log.Vertical.TScrollbar", troughcolor=C_LOG_BG, background="#39414f",
+        bordercolor=C_LOG_BG, arrowcolor=C_LOG_FG, relief="flat", borderwidth=0
+    )
     st.map("Log.Vertical.TScrollbar", background=[("active", "#4b586b")])
 
     st.configure("TButton", font=UI_FONT, padding=(12, 7))
-    st.configure("Ghost.TButton", font=UI_FONT, padding=(12, 7),
-                 background="#e4e9f2", foreground=C_INK, bordercolor=C_BORDER)
+    st.configure(
+        "Ghost.TButton", font=UI_FONT, padding=(12, 7),
+        background="#e4e9f2", foreground=C_INK, bordercolor=C_BORDER
+    )
     st.map("Ghost.TButton", background=[("active", "#d5dcea")])
-    st.configure("Accent.TButton", font=UI_FONT_B, padding=(14, 8),
-                 background=C_ACCENT, foreground="white", bordercolor=C_ACCENT)
+    st.configure(
+        "Accent.TButton", font=UI_FONT_B, padding=(14, 8),
+        background=C_ACCENT, foreground="white", bordercolor=C_ACCENT
+    )
     st.map("Accent.TButton", background=[("active", C_ACCENT_D), ("disabled", "#a9c3e6")])
-    st.configure("Danger.TButton", font=UI_FONT_B, padding=(14, 8),
-                 background=C_DANGER, foreground="white", bordercolor=C_DANGER)
+    st.configure(
+        "Danger.TButton", font=UI_FONT_B, padding=(14, 8),
+        background=C_DANGER, foreground="white", bordercolor=C_DANGER
+    )
     st.map("Danger.TButton", background=[("active", C_DANGER_D), ("disabled", "#e0b3b3")])
     st.configure("TProgressbar", background=C_ACCENT, troughcolor="#e4e9f2", bordercolor=C_BG)
