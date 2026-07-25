@@ -109,16 +109,30 @@ def _raise(exc):
     return opener
 
 
-@pytest.mark.parametrize(("exc", "text"), [
-    (urllib.error.HTTPError("u", 404, "Not Found", {}, None), "нет ни одного релиза"),
-    (urllib.error.HTTPError("u", 403, "rate limit", {}, None), "ограничил число запросов"),
-    (urllib.error.HTTPError("u", 500, "Server Error", {}, None), "ошибкой 500"),
-    (urllib.error.URLError("нет сети"), "Нет связи с GitHub"),
-    (TimeoutError(), "не ответил за отведённое время"),
-    (OSError("обрыв TLS"), "Не удалось обратиться к GitHub"),
+def _http_error(code: int, reason: str) -> urllib.error.HTTPError:
+    """HTTPError с пустым телом ответа.
+
+    Тело (fp) передаётся явно: при fp=None на Python 3.9 HTTPError открывает
+    tempfile.TemporaryFile, и обращение к любому неизвестному атрибуту такого объекта
+    падает с KeyError. Из-за этого pytest не мог даже собрать тесты, когда готовые
+    исключения лежали прямо в списке parametrize.
+    """
+    return urllib.error.HTTPError("https://example/api", code, reason, {}, io.BytesIO(b""))
+
+
+# Исключения создаются ВНУТРИ теста (параметр — фабрика), а не в списке parametrize:
+# pytest вычисляет id по значениям параметров и трогает у них атрибуты, поэтому живым
+# объектам-исключениям там не место. Заодно id заданы явно и читаются в отчёте.
+@pytest.mark.parametrize(("make_exc", "text"), [
+    pytest.param(lambda: _http_error(404, "Not Found"), "нет ни одного релиза", id="http-404"),
+    pytest.param(lambda: _http_error(403, "rate limit"), "ограничил число запросов", id="http-403"),
+    pytest.param(lambda: _http_error(500, "Server Error"), "ошибкой 500", id="http-500"),
+    pytest.param(lambda: urllib.error.URLError("нет сети"), "Нет связи с GitHub", id="url-error"),
+    pytest.param(lambda: TimeoutError(), "не ответил за отведённое время", id="timeout"),
+    pytest.param(lambda: OSError("обрыв TLS"), "Не удалось обратиться к GitHub", id="os-error"),
 ])
-def test_network_errors_become_readable(monkeypatch, exc, text):
-    monkeypatch.setattr(updater.urllib.request, "urlopen", _raise(exc))
+def test_network_errors_become_readable(monkeypatch, make_exc, text):
+    monkeypatch.setattr(updater.urllib.request, "urlopen", _raise(make_exc()))
     with pytest.raises(UpdateError, match=text):
         check_latest("1.4.0")
 
