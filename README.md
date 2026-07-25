@@ -1,4 +1,4 @@
-<img src="src/omsreg/gui/assets/icon.png" width="96" alt="duct-tape — синяя изолента">
+<img src="src/omsreg/gui/assets/icon.png" width="96" alt="Синяя изолента">
 
 # Синяя изолента — инструменты медицинской статистики
 
@@ -33,6 +33,8 @@
 | ![Удаление по протоколам](docs/screenshots/talons.png) | ![Удаление по списку кодов](docs/screenshots/codes.png) |
 | **Статистика стационара** | **Экономика стационара** |
 | ![Статистика стационара](docs/screenshots/stat.png) | ![Экономика стационара](docs/screenshots/economics.png) |
+| **Смертность стационара** | **О программе и обновление** |
+| ![Смертность стационара](docs/screenshots/deaths.png) | ![О программе](docs/screenshots/about.png) |
 
 Общие свойства обеих утилит удаления:
 
