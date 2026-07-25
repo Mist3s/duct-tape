@@ -51,10 +51,12 @@ class _FakeLog:
 class _FakeApp:
     """Достаточный «self» для методов App, которым нужны только поля и журнал."""
 
-    def __init__(self, items=(), log_handler=None):
+    def __init__(self, items=(), log_handler=None, check_updates=True):
         self._items = list(items)
         self.log = _FakeLog()
         self.log_handler = log_handler
+        # общая настройка программы (не из схемы параметров) — её читает и пишет _load/_save
+        self.check_updates_var = _FakeVar(check_updates)
 
     def _iter_config(self):
         return iter(self._items)
@@ -169,6 +171,42 @@ def test_load_config_warns_about_line_without_equals(tmp_path, monkeypatch):
     warns = [line for tag, line in stub.log.lines if tag == "warn"]
     assert warns == ["Настройки, строка не понята (нет «=»), пропущена — строка 2: мусор без знака"]
     assert stub._items[0][2].get() == 8  # исправное значение всё равно прочитано
+
+
+def test_load_config_reads_check_updates_setting(tmp_path, monkeypatch):
+    """Галочка автопроверки читается из настроек; «0» выключает её."""
+    path = tmp_path / "настройки.txt"
+    path.write_text(f"{cfg.KEY_CHECK_UPDATES} = 0\n", encoding="utf-8")
+    monkeypatch.setattr(cfg, "config_path", lambda: path)
+    stub = _FakeApp(check_updates=True)
+
+    gui_app.App._load_config(stub)
+
+    assert stub.check_updates_var.get() is False
+
+
+def test_load_config_accepts_yes_forms(tmp_path, monkeypatch):
+    path = tmp_path / "настройки.txt"
+    path.write_text(f"{cfg.KEY_CHECK_UPDATES} = да\n", encoding="utf-8")
+    monkeypatch.setattr(cfg, "config_path", lambda: path)
+    stub = _FakeApp(check_updates=False)
+
+    gui_app.App._load_config(stub)
+
+    assert stub.check_updates_var.get() is True
+
+
+def test_save_config_writes_check_updates_setting(tmp_path, monkeypatch):
+    path = tmp_path / "настройки.txt"
+    monkeypatch.setattr(cfg, "config_path", lambda: path)
+    stub = _FakeApp([("codes", _int_param(), _FakeVar(7))], check_updates=False)
+
+    assert gui_app.App._save_config(stub, silent=True) is True
+
+    data, problems = cfg.read_kv(path)
+    assert problems == []
+    assert data[cfg.KEY_CHECK_UPDATES] == "0"
+    assert data["codes.min_len"] == "7"      # поля утилит по-прежнему сохраняются
 
 
 def test_job_logger_finds_logger_of_running_task():

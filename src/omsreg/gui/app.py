@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Единое графическое приложение платформы «Обработка реестров ОМС».
+"""Единое графическое приложение платформы «Синяя изолента».
 
 Вкладки, хранение настроек и весь поток запуск/проверка/подтверждение/журнал
 строятся автоматически из реестра утилит (omsreg.gui.registry). Само приложение
@@ -22,12 +22,14 @@ from importlib.resources import as_file, files
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from omsreg.core import JobError, QueueLogHandler
+from omsreg.core import JobError, QueueLogHandler, updater
 from omsreg.gui import config as cfg
+from omsreg.gui.about import AboutPage
 from omsreg.gui.log_panel import LogPanel, autohide_scrollbar
 from omsreg.gui.registry import discover
 from omsreg.gui.spec import BoxKind, ParamKind, RunContext, UtilitySpec
 from omsreg.gui.theme import (
+    APP_SUBTITLE,
     APP_TITLE,
     C_ACCENT,
     C_BG,
@@ -126,6 +128,8 @@ class App(tk.Tk):
         self.run_buttons: list[ttk.Button] = []
         self.tabs: dict[str, UtilityTab] = {}
         self.last_open: Path | None = None
+        # галочка страницы «О программе»; значение приходит из настроек (см. _load_config)
+        self.check_updates_var = tk.BooleanVar(value=True)
 
         build_styles(self)
         self._build_header()
@@ -135,6 +139,11 @@ class App(tk.Tk):
         self.log.write("Готово к работе. Выберите утилиту слева, укажите папку и нажмите кнопку.")
         self._load_config()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        # хвост прошлого обновления и автопроверка — после загрузки настроек, чтобы
+        # учитывалась галочка «Проверять обновления при запуске»
+        updater.cleanup_leftovers()
+        self.after(300, self.about.check_on_start)
 
     # ------------------------------------------------ оформление
     def _set_window_icon(self) -> None:
@@ -151,9 +160,8 @@ class App(tk.Tk):
         head.pack(fill="x", side="top")
         tk.Label(head, text=APP_TITLE, bg=C_HEADER, fg="white",
                  font=TITLE_FONT).pack(anchor="w", padx=20, pady=(14, 0))
-        tk.Label(head, text="удаление ошибочных талонов и статистика стационара по DBF-файлам",
-                 bg=C_HEADER, fg=C_HEADER_SUB, font=("Segoe UI", 9)).pack(
-            anchor="w", padx=20, pady=(0, 12))
+        tk.Label(head, text=APP_SUBTITLE, bg=C_HEADER, fg=C_HEADER_SUB,
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=20, pady=(0, 12))
         tk.Frame(self, bg=C_ACCENT, height=3).pack(fill="x", side="top")
 
     def _build_body(self) -> None:
@@ -222,8 +230,11 @@ class App(tk.Tk):
             self._build_page(page, tab)
             self.tab_pages.append(page)
 
-        # Фиксируем высоту рабочей области по самой высокой утилите — иначе при
-        # переключении журнал «прыгает». Ту же высоту получает боковой холст,
+        self._build_about_entry(inner, sidebar_w)
+
+        # Фиксируем высоту рабочей области по самой высокой странице (включая «О
+        # программе») — иначе при переключении журнал «прыгает», а содержимое самой
+        # высокой страницы обрезается. Ту же высоту получает боковой холст,
         # поэтому полоса прокрутки меню не мелькает при старте.
         page_h = 0
         for pg in self.tab_pages:
@@ -241,6 +252,52 @@ class App(tk.Tk):
         self.update_idletasks()
         canvas.configure(scrollregion=canvas.bbox("all"))
         canvas.yview_moveto(0)  # пересчитать видимость полосы прокрутки после раскладки
+
+    def _build_about_entry(self, inner: tk.Frame, sidebar_w: int) -> None:
+        """Добавляет в конец бокового списка страницу «О программе».
+
+        Это не утилита (нет параметров и запуска задачи), поэтому она не проходит через
+        реестр плагинов: пункт отделён чертой и добавляется последним, а её страница
+        участвует в замере высоты рабочей области наравне с остальными.
+        """
+        idx = len(self.tab_buttons)
+        ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=(8, 8))
+        button = tk.Label(inner, text="О программе", font=UI_FONT_B, anchor="w",
+                          justify="left", padx=16, pady=12, bg=C_TAB_IDLE, fg=C_INK2,
+                          cursor="hand2", wraplength=sidebar_w - 32)
+        button.pack(fill="x", pady=(0, 2))
+        button.bind("<Button-1>", lambda _e: self._select_tab(idx))
+        button.bind("<Enter>", lambda _e: self._hover_tab(idx, True))
+        button.bind("<Leave>", lambda _e: self._hover_tab(idx, False))
+        self.tab_buttons.append(button)
+
+        self._about_button = button
+        page = tk.Frame(self.content_holder, bg=C_CARD)
+        page.columnconfigure(1, weight=1)
+        self.about = AboutPage(page, self.check_updates_var, log_write=self.log_line,
+                               on_update_found=self._mark_update_available)
+        self.tab_pages.append(page)
+
+    def _mark_update_available(self, version: str) -> None:
+        """Отмечает пункт «О программе», когда найдено обновление.
+
+        Меняется именно текст, а не цвет: цвета пунктов переназначаются при каждом
+        переключении страниц (_select_tab), и подсветка бы стёрлась.
+        """
+        self._about_button.config(text=f"О программе  ●  {version}")
+
+    def log_line(self, text: str, tag: str = "") -> None:
+        """Пишет строку в журнал программы (для страниц, у которых нет задачи)."""
+        self.log.write(text, tag=tag)
+
+    def close_for_update(self) -> None:
+        """Закрывает программу перед перезапуском обновлённой версии.
+
+        Настройки сохраняются, как при обычном закрытии, но вопросов пользователю
+        не задаётся: он уже подтвердил установку обновления.
+        """
+        self._save_config(silent=True)
+        self.destroy()
 
     def _select_tab(self, idx: int) -> None:
         self.active_tab = idx
@@ -592,6 +649,9 @@ class App(tk.Tk):
                 var.set(raw)
         for item in bad_numbers:
             self.log.write(f"Настройки, значение не число — {item}", tag="warn")
+        raw_check = data.get(cfg.KEY_CHECK_UPDATES)
+        if raw_check is not None:
+            self.check_updates_var.set(raw_check.strip().lower() in ("1", "да", "true", "yes"))
         self.log.write(f"Настройки загружены из {path.name}")
 
     def _save_config(self, silent: bool = False) -> bool:
@@ -603,6 +663,7 @@ class App(tk.Tk):
             except tk.TclError:
                 val = ""
             items.append((p.config_key(util_id), str(val)))
+        items.append((cfg.KEY_CHECK_UPDATES, "1" if self.check_updates_var.get() else "0"))
         try:
             cfg.write_kv(path, items)
             if not silent:
