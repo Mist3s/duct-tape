@@ -6,6 +6,8 @@
 версию на место.
 """
 
+from __future__ import annotations
+
 import hashlib
 import io
 import urllib.error
