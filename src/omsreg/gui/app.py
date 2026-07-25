@@ -182,6 +182,13 @@ class App(tk.Tk):
         # --- боковой список утилит в прокручиваемом холсте ---
         side = tk.Frame(mid, bg=C_BG)
         side.pack(side="left", fill="y")
+
+        # «О программе» прижата к низу колонки и НЕ прокручивается вместе с утилитами:
+        # это не утилита, её место постоянно. Полоса упаковывается ПЕРВОЙ — иначе холст
+        # заберёт всю высоту, и нижняя полоса встанет правее списка, а не под ним.
+        about_holder = tk.Frame(side, bg=C_BG)
+        about_holder.pack(side="bottom", fill="x")
+
         canvas = tk.Canvas(side, bg=C_BG, width=sidebar_w, highlightthickness=0, bd=0)
         vsb = ttk.Scrollbar(side, orient="vertical", command=canvas.yview)
         canvas.pack(side="left", fill="y")
@@ -230,12 +237,11 @@ class App(tk.Tk):
             self._build_page(page, tab)
             self.tab_pages.append(page)
 
-        self._build_about_entry(inner, sidebar_w)
+        self._build_about_entry(about_holder, sidebar_w)
 
         # Фиксируем высоту рабочей области по самой высокой странице (включая «О
         # программе») — иначе при переключении журнал «прыгает», а содержимое самой
-        # высокой страницы обрезается. Ту же высоту получает боковой холст,
-        # поэтому полоса прокрутки меню не мелькает при старте.
+        # высокой страницы обрезается.
         page_h = 0
         for pg in self.tab_pages:
             pg.pack(fill="both", expand=True, padx=22, pady=PAGE_PADY)
@@ -245,7 +251,10 @@ class App(tk.Tk):
         holder_h = page_h + 2 * PAGE_PADY  # отступы страницы сверху и снизу
         self.content_holder.configure(height=holder_h)
         self.content_holder.pack_propagate(False)
-        canvas.configure(height=holder_h)
+        # Холст получает высоту рабочей области МИНУС нижняя полоса: вместе они дают
+        # ровно высоту карточки, поэтому колонка не выше её, а полоса прокрутки
+        # появляется точно тогда, когда список утилит перестаёт влезать.
+        canvas.configure(height=max(1, holder_h - about_holder.winfo_reqheight()))
 
         if self.specs:
             self._select_tab(0)
@@ -253,19 +262,20 @@ class App(tk.Tk):
         canvas.configure(scrollregion=canvas.bbox("all"))
         canvas.yview_moveto(0)  # пересчитать видимость полосы прокрутки после раскладки
 
-    def _build_about_entry(self, inner: tk.Frame, sidebar_w: int) -> None:
-        """Добавляет в конец бокового списка страницу «О программе».
+    def _build_about_entry(self, holder: tk.Frame, sidebar_w: int) -> None:
+        """Добавляет пункт «О программе», прижатый к низу бокового меню.
 
         Это не утилита (нет параметров и запуска задачи), поэтому она не проходит через
-        реестр плагинов: пункт отделён чертой и добавляется последним, а её страница
-        участвует в замере высоты рабочей области наравне с остальными.
+        реестр плагинов и не прокручивается вместе со списком утилит: holder — отдельная
+        полоса, прижатая к низу колонки. Страница участвует в замере высоты рабочей
+        области наравне с остальными, иначе её содержимое обрезалось бы.
         """
         idx = len(self.tab_buttons)
-        ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=(8, 8))
-        button = tk.Label(inner, text="О программе", font=UI_FONT_B, anchor="w",
+        ttk.Separator(holder, orient="horizontal").pack(fill="x", pady=(8, 8))
+        button = tk.Label(holder, text="О программе", font=UI_FONT_B, anchor="w",
                           justify="left", padx=16, pady=12, bg=C_TAB_IDLE, fg=C_INK2,
                           cursor="hand2", wraplength=sidebar_w - 32)
-        button.pack(fill="x", pady=(0, 2))
+        button.pack(fill="x")
         button.bind("<Button-1>", lambda _e: self._select_tab(idx))
         button.bind("<Enter>", lambda _e: self._hover_tab(idx, True))
         button.bind("<Leave>", lambda _e: self._hover_tab(idx, False))
